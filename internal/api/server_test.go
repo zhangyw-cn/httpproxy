@@ -112,6 +112,7 @@ func TestWebSocketReceivesSinkEvents(t *testing.T) {
 	}
 	defer conn.CloseNow()
 
+	waitForClient(t, srv)
 	srv.Sink().OnCreated(flow.Flow{ID: "created", Host: "example.com"})
 
 	var event struct {
@@ -126,6 +127,17 @@ func TestWebSocketReceivesSinkEvents(t *testing.T) {
 	}
 	if _, ok := st.Get("created"); !ok {
 		t.Fatal("sink did not add flow to store")
+	}
+}
+
+func waitForClient(t *testing.T, srv *api.Server) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for srv.ClientCount() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("websocket client was not registered")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

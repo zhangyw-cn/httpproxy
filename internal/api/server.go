@@ -42,6 +42,11 @@ func (s *Server) Sink() proxy.FlowSink {
 	return s.sink
 }
 
+// ClientCount returns the number of active WebSocket clients.
+func (s *Server) ClientCount() int {
+	return s.hub.ClientCount()
+}
+
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.health)
 	s.mux.HandleFunc("GET /api/flows", s.listFlows)
