@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/http2"
 
 	"httpproxy/internal/cert"
 	"httpproxy/internal/flow"
@@ -382,6 +383,77 @@ func TestProxyHTTPSMITMUsesConnectAuthorityOverInnerHost(t *testing.T) {
 	if f.Host != upstreamURL.Host || f.Path != "/secure?q=1" {
 		t.Fatalf("flow target/path: host=%q path=%q", f.Host, f.Path)
 	}
+}
+
+func TestProxyHTTP2(t *testing.T) {
+	upstream := newH2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("upstream got proto %s", r.Proto)
+		}
+		_, _ = io.WriteString(w, "h2ok")
+	}))
+	defer upstream.Close()
+
+	manager, err := cert.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &memSink{}
+	p := New("127.0.0.1:0", sink, 1024, manager)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.ListenAndServe() }()
+	t.Cleanup(func() {
+		_ = p.Close()
+		if err := <-errCh; err != nil {
+			t.Errorf("ListenAndServe: %v", err)
+		}
+	})
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(manager.CACertPEM()) {
+		t.Fatal("failed to trust proxy CA")
+	}
+	proxyURL, err := url.Parse("http://" + waitAddr(t, p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{
+		Proxy:             http.ProxyURL(proxyURL),
+		TLSClientConfig:   &tls.Config{RootCAs: pool, NextProtos: []string{"h2"}},
+		ForceAttemptHTTP2: true,
+	}
+	if err := http2.ConfigureTransport(transport); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+	resp, err := client.Get(upstream.URL + "/h2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "h2ok" {
+		t.Fatalf("got %q", body)
+	}
+	f := waitUpdatedFlow(t, sink)
+	if f.HTTPVersion != "2" {
+		t.Fatalf("want http version 2, got %q", f.HTTPVersion)
+	}
+}
+
+func newH2TLSServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	server := httptest.NewUnstartedServer(handler)
+	server.TLS = &tls.Config{NextProtos: []string{"h2"}}
+	if err := http2.ConfigureServer(server.Config, &http2.Server{}); err != nil {
+		t.Fatal(err)
+	}
+	server.StartTLS()
+	return server
 }
 
 func proxyClient(t *testing.T, addr string) *http.Client {

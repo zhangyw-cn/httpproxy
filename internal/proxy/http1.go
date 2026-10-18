@@ -64,7 +64,7 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 		return
 	}
 	if tlsConn.ConnectionState().NegotiatedProtocol == "h2" {
-		// TODO(task 6): serve HTTP/2 streams after TLS negotiation.
+		p.handleHTTP2(tlsConn, connectAuthority)
 		return
 	}
 
