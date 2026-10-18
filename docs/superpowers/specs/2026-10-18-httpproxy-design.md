@@ -40,6 +40,7 @@
 | 协议 | HTTP/1.1 + HTTP/2 |
 | 端口 | 双端口：代理 + Web UI |
 | UI | 流量列表 + 详情 + 简单过滤（host / path / status） |
+| UI 视觉 | 壳层参考 VS Code / GitHub；抓包工作区参考 Chrome DevTools Network |
 | 交付 | 单文件可执行程序 |
 
 ### 2.2 成功标准
@@ -166,10 +167,35 @@ DNS、连接、TLS、上游协议错误：写入 `flow.error`，Flow 仍出现�
 ### 6.3 前端
 
 - 栈：Vite + React + TypeScript。  
-- 布局：左侧流量列表，右侧详情（Headers / Request / Response）。  
-- 顶栏：host/path/status 过滤、清空、CA 下载、代理地址提示。  
-- Body：优先纯文本；若为 JSON 则尝试格式化展示（不做完整语法主题高亮）。  
 - 嵌入：`web/` 构建产物复制或输出到 `internal/ui/dist`，由 `go:embed` 服务；非 API/WS 路径回退到 `index.html`（SPA）。  
+
+#### 6.3.1 视觉与交互参考（强制对齐）
+
+分两层，避免「整页模仿 Chrome」或「整页模仿 VS Code」混成一种产品：
+
+| 层 | 参考 | 对齐什么 | 不对齐什么 |
+|---|---|---|---|
+| **应用壳** | VS Code + GitHub | 整体气质：克制、偏工具/开发者；顶栏与侧栏密度、边框分隔、列表行高、字体层级；浅色为主（可用与 GitHub 接近的中性灰表面 + 清晰分割线）；强调色克制（类似 GitHub 蓝作链接/选中，而非炫光） | 不复刻 VS Code Activity Bar 全套、不嵌入 Monaco、不做 GitHub 营销站风格大留白 |
+| **抓包工作区** | Chrome DevTools → Network | 主工作流：上方/主区 **瀑布式请求表**（列：Name/Path、Status、Method、Type 或 Version、Size、Time 等）；选中一行后 **下方（或右侧可切换）详情面板**，Tabs 为 Headers / Payload(Request) / Response / 可选 Timing；过滤条贴近 Network 的 filter 体验（文本过滤 + status 类快捷） | 不实现 Initiator、完整 Waterfall 时间条、HAR 导入导出、Override 等高级能力（v1） |
+
+#### 6.3.2 布局（v1）
+
+```text
+┌─ 顶栏（VS Code/GitHub 气质）: 标题 · 代理地址 · CA 下载 · 清空 ─┐
+├─ 过滤条（Chrome Network 气质）: host/path 文本 · status ────────┤
+├─────────────────────────────┬──────────────────────────────────┤
+│  Flow 表格（Chrome Network） │  详情 Tabs（Headers / Request /  │
+│  行选中高亮；新流量追加      │  Response）；JSON 可格式化文本   │
+└─────────────────────────────┴──────────────────────────────────┘
+```
+
+默认采用 **上表 + 下详情**（更贴近 Chrome Network）；若视口较宽，允许实现为 **左表 + 右详情**，但表格列与详情 Tabs 语义仍按 Network，不按 mitmweb 随意命名。
+
+#### 6.3.3 内容展示
+
+- Body：优先纯文本；检测到 JSON 则格式化展示（等宽字体，类似 DevTools；v1 不做完整语法主题高亮）。  
+- 错误 Flow：Status 列显示失败态（如 `(failed)` 或红色标记 + `error` 文案可在详情中看到）。  
+- 清空：对应 Network 的「清除」心智，一键 `DELETE /api/flows`。  
 
 ### 6.4 CLI
 
@@ -229,3 +255,4 @@ httpproxy/
 
 - 方案：自研 MITM + 开发期热更新 / 发布 embed（对话确认）  
 - 设计 §1–§5：用户逐节确认 OK（2026-10-18）  
+- UI 修订：壳层参考 VS Code/GitHub，抓包工作区参考 Chrome DevTools Network（2026-10-18，待用户确认本文档修订）  
