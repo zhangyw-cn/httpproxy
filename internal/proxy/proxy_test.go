@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
@@ -291,6 +292,95 @@ func TestProxyHTTPSMITM(t *testing.T) {
 	}
 	if f.HTTPVersion != "1.1" || f.StatusCode != http.StatusOK || string(f.RespBody) != "secure" {
 		t.Fatalf("response flow: %+v body=%q", f, f.RespBody)
+	}
+}
+
+func TestProxyHTTPSMITMUsesConnectAuthorityOverInnerHost(t *testing.T) {
+	upstreamRequests := make(chan *http.Request, 1)
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequests <- r.Clone(r.Context())
+		_, _ = io.WriteString(w, "connect-target")
+	}))
+	defer upstream.Close()
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := cert.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &memSink{}
+	p := New("127.0.0.1:0", sink, 1024, manager)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true} // httptest uses a private test CA.
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.ListenAndServe() }()
+	t.Cleanup(func() {
+		_ = p.Close()
+		if err := <-errCh; err != nil {
+			t.Errorf("ListenAndServe: %v", err)
+		}
+	})
+
+	conn, err := net.DialTimeout("tcp", waitAddr(t, p), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, err = io.WriteString(conn, "CONNECT "+upstreamURL.Host+" HTTP/1.1\r\nHost: "+upstreamURL.Host+"\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectResp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = connectResp.Body.Close()
+	if connectResp.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT status = %d", connectResp.StatusCode)
+	}
+
+	host, _, err := net.SplitHostPort(upstreamURL.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(manager.CACertPEM()) {
+		t.Fatal("failed to trust proxy CA")
+	}
+	tlsConn := tls.Client(conn, &tls.Config{RootCAs: pool, ServerName: host})
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.WriteString(tlsConn, "GET /secure?q=1 HTTP/1.1\r\nHost: override.invalid:9443\r\nConnection: close\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tlsConn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "connect-target" {
+		t.Fatalf("response = %d, %q", resp.StatusCode, body)
+	}
+
+	select {
+	case got := <-upstreamRequests:
+		if got.URL.RequestURI() != "/secure?q=1" {
+			t.Fatalf("upstream request URI = %q", got.URL.RequestURI())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("CONNECT target did not receive request")
+	}
+	f := waitUpdatedFlow(t, sink)
+	if f.Host != upstreamURL.Host || f.Path != "/secure?q=1" {
+		t.Fatalf("flow target/path: host=%q path=%q", f.Host, f.Path)
 	}
 }
 

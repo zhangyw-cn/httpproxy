@@ -41,7 +41,11 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 		return
 	}
 
-	connectHost := connectReq.URL.Hostname()
+	connectAuthority := connectReq.URL.Host
+	if connectAuthority == "" {
+		connectAuthority = connectReq.Host
+	}
+	connectHost := hostWithoutPort(connectAuthority)
 	if connectHost == "" {
 		connectHost = hostWithoutPort(connectReq.Host)
 	}
@@ -70,7 +74,7 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 		if err != nil {
 			return
 		}
-		if !p.handleRequest(tlsConn, req, "https", connectReq.Host) {
+		if !p.handleRequest(tlsConn, req, "https", connectAuthority) {
 			return
 		}
 	}
@@ -82,9 +86,9 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	_ = req.Body.Close()
 	requestCapture := newBodyCapture(p.maxBody)
 	_, _ = requestCapture.Write(requestBody)
-	host := req.Host
+	host := defaultHost
 	if host == "" {
-		host = defaultHost
+		host = req.Host
 	}
 	f := flow.Flow{
 		ID:          uuid.NewString(),
@@ -110,11 +114,14 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	}
 	req.Body = io.NopCloser(bytes.NewReader(requestBody))
 	req.RequestURI = ""
-	if req.URL.Scheme == "" {
+	if defaultHost != "" {
 		req.URL.Scheme = scheme
-	}
-	if req.URL.Host == "" {
-		req.URL.Host = host
+		req.URL.Host = defaultHost
+	} else if req.URL.Scheme == "" {
+		req.URL.Scheme = scheme
+		if req.URL.Host == "" {
+			req.URL.Host = host
+		}
 	}
 
 	resp, err := p.roundTrip(req)
