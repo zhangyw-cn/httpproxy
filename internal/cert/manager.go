@@ -1,6 +1,7 @@
 package cert
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -36,6 +38,11 @@ func LoadOrCreate(caDir string) (*Manager, error) {
 	if err := os.MkdirAll(caDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create CA directory: %w", err)
 	}
+	unlock, err := lockCAInit(caDir)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
 	certPath := filepath.Join(caDir, caCertFilename)
 	keyPath := filepath.Join(caDir, caKeyFilename)
@@ -46,18 +53,16 @@ func LoadOrCreate(caDir string) (*Manager, error) {
 		if err := os.Chmod(keyPath, 0o600); err != nil {
 			return nil, fmt.Errorf("secure CA key: %w", err)
 		}
-	case errors.Is(certErr, os.ErrNotExist) || errors.Is(keyErr, os.ErrNotExist):
-		var err error
+	case errors.Is(certErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist):
 		certPEM, keyPEM, err = generateCA()
 		if err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-			return nil, fmt.Errorf("write CA key: %w", err)
+		if err := publishCA(certPath, keyPath, certPEM, keyPEM); err != nil {
+			return nil, err
 		}
-		if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
-			return nil, fmt.Errorf("write CA certificate: %w", err)
-		}
+	case errors.Is(certErr, os.ErrNotExist) != errors.Is(keyErr, os.ErrNotExist):
+		return nil, errors.New("incomplete CA files: ca.crt and ca.key must both exist")
 	default:
 		if certErr != nil {
 			return nil, fmt.Errorf("read CA certificate: %w", certErr)
@@ -73,6 +78,17 @@ func LoadOrCreate(caDir string) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse CA key: %w", err)
 	}
+	certPublicKey, err := x509.MarshalPKIXPublicKey(caCert.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("marshal CA certificate public key: %w", err)
+	}
+	privatePublicKey, err := x509.MarshalPKIXPublicKey(caKey.Public())
+	if err != nil {
+		return nil, fmt.Errorf("marshal CA private key public key: %w", err)
+	}
+	if !bytes.Equal(certPublicKey, privatePublicKey) {
+		return nil, errors.New("CA certificate public key does not match CA private key")
+	}
 	if !caCert.IsCA {
 		return nil, errors.New("CA certificate is not a certificate authority")
 	}
@@ -83,6 +99,71 @@ func LoadOrCreate(caDir string) (*Manager, error) {
 		caPEM:  append([]byte(nil), certPEM...),
 		leaves: make(map[string]*tls.Certificate),
 	}, nil
+}
+
+func lockCAInit(caDir string) (func(), error) {
+	lock, err := os.OpenFile(filepath.Join(caDir, ".ca.init.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open CA initialization lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("lock CA initialization: %w", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}, nil
+}
+
+func publishCA(certPath, keyPath string, certPEM, keyPEM []byte) error {
+	keyTemp, err := writeTempFile(filepath.Dir(keyPath), ".ca.key-*.tmp", keyPEM, 0o600)
+	if err != nil {
+		return fmt.Errorf("stage CA key: %w", err)
+	}
+	defer os.Remove(keyTemp)
+
+	certTemp, err := writeTempFile(filepath.Dir(certPath), ".ca.crt-*.tmp", certPEM, 0o644)
+	if err != nil {
+		return fmt.Errorf("stage CA certificate: %w", err)
+	}
+	defer os.Remove(certTemp)
+
+	if err := os.Rename(keyTemp, keyPath); err != nil {
+		return fmt.Errorf("publish CA key: %w", err)
+	}
+	if err := os.Rename(certTemp, certPath); err != nil {
+		_ = os.Remove(keyPath)
+		return fmt.Errorf("publish CA certificate: %w", err)
+	}
+	return nil
+}
+
+func writeTempFile(dir, pattern string, data []byte, mode os.FileMode) (path string, err error) {
+	file, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	path = file.Name()
+	defer func() {
+		if err != nil {
+			_ = file.Close()
+			_ = os.Remove(path)
+		}
+	}()
+	if err = file.Chmod(mode); err != nil {
+		return "", err
+	}
+	if _, err = file.Write(data); err != nil {
+		return "", err
+	}
+	if err = file.Sync(); err != nil {
+		return "", err
+	}
+	if err = file.Close(); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func (m *Manager) CACertPEM() []byte {

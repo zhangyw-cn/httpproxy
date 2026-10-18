@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"httpproxy/internal/cert"
@@ -97,5 +98,59 @@ func TestGetCertificateCachesLeafWithDNSName(t *testing.T) {
 	}
 	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != hello.ServerName {
 		t.Fatalf("DNSNames = %v, want [%q]", leaf.DNSNames, hello.ServerName)
+	}
+}
+
+func TestLoadOrCreateRejectsMismatchedCertificateAndKey(t *testing.T) {
+	firstDir := t.TempDir()
+	secondDir := t.TempDir()
+	if _, err := cert.LoadOrCreate(firstDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cert.LoadOrCreate(secondDir); err != nil {
+		t.Fatal(err)
+	}
+
+	secondKey, err := os.ReadFile(filepath.Join(secondDir, "ca.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(firstDir, "ca.key"), secondKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cert.LoadOrCreate(firstDir)
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("LoadOrCreate error = %v, want clear key mismatch error", err)
+	}
+}
+
+func TestLoadOrCreateRejectsIncompletePair(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := cert.LoadOrCreate(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "ca.key")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := cert.LoadOrCreate(dir)
+	if err == nil || !strings.Contains(err.Error(), "incomplete CA files") {
+		t.Fatalf("LoadOrCreate error = %v, want incomplete pair error", err)
+	}
+}
+
+func TestLoadOrCreateRejectsCorruptPEM(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ca.crt"), []byte("not PEM"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ca.key"), []byte("not PEM"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := cert.LoadOrCreate(dir)
+	if err == nil || !strings.Contains(err.Error(), "parse CA certificate") {
+		t.Fatalf("LoadOrCreate error = %v, want certificate parse error", err)
 	}
 }
