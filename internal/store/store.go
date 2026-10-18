@@ -33,10 +33,9 @@ func (s *Store) Add(f flow.Flow) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if existing, ok := s.byID[f.ID]; ok {
+	if _, ok := s.byID[f.ID]; ok {
 		delete(s.byID, f.ID)
 		s.removeFromOrder(f.ID)
-		_ = existing
 	}
 
 	s.byID[f.ID] = f
