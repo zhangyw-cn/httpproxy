@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -14,6 +15,9 @@ type Proxy struct {
 	sink    FlowSink
 	maxBody int64
 	ca      *cert.Manager
+
+	// UpstreamTLS is nil in production so system roots are used.
+	UpstreamTLS *tls.Config
 
 	mu        sync.Mutex
 	listener  net.Listener

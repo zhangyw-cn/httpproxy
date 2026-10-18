@@ -1,8 +1,9 @@
 package proxy
 
 import (
-	"bufio"
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"httpproxy/internal/cert"
 	"httpproxy/internal/flow"
 )
 
@@ -229,9 +231,22 @@ func TestProxyUpstreamFailureUpdatesFlowAndReturnsBadGateway(t *testing.T) {
 	}
 }
 
-func TestProxyConnectReturnsNotImplemented(t *testing.T) {
+func TestProxyHTTPSMITM(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/secure" {
+			t.Errorf("upstream path = %q", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, "secure")
+	}))
+	defer upstream.Close()
+
+	manager, err := cert.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	sink := &memSink{}
-	p := New("127.0.0.1:0", sink, 1024, nil)
+	p := New("127.0.0.1:0", sink, 1024, manager)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true} // httptest uses a private test CA.
 	errCh := make(chan error, 1)
 	go func() { errCh <- p.ListenAndServe() }()
 	t.Cleanup(func() {
@@ -241,19 +256,41 @@ func TestProxyConnectReturnsNotImplemented(t *testing.T) {
 		}
 	})
 
-	conn, err := net.Dial("tcp", waitAddr(t, p))
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(manager.CACertPEM()) {
+		t.Fatal("failed to trust proxy CA")
+	}
+	proxyURL, err := url.Parse("http://" + waitAddr(t, p))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
-	_, _ = io.WriteString(conn, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy:             http.ProxyURL(proxyURL),
+			DisableKeepAlives: true,
+			TLSClientConfig:   &tls.Config{RootCAs: pool},
+		},
+		Timeout: 2 * time.Second,
+	}
+	resp, err := client.Get(upstream.URL + "/secure")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status = %d", resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "secure" {
+		t.Fatalf("response = %d, %q", resp.StatusCode, body)
+	}
+
+	f := waitUpdatedFlow(t, sink)
+	if f.Scheme != "https" || f.Method != http.MethodGet || f.Path != "/secure" {
+		t.Fatalf("request metadata: %+v", f)
+	}
+	if f.HTTPVersion != "1.1" || f.StatusCode != http.StatusOK || string(f.RespBody) != "secure" {
+		t.Fatalf("response flow: %+v body=%q", f, f.RespBody)
 	}
 }
 
