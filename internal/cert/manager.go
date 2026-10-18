@@ -33,7 +33,13 @@ type Manager struct {
 
 	mu     sync.Mutex
 	leaves map[string]*tls.Certificate
+	now    func() time.Time
 }
+
+const (
+	leafValidity      = 24 * time.Hour
+	leafRefreshBefore = time.Hour
+)
 
 func LoadOrCreate(caDir string) (*Manager, error) {
 	if err := os.MkdirAll(caDir, 0o755); err != nil {
@@ -99,6 +105,7 @@ func LoadOrCreate(caDir string) (*Manager, error) {
 		caKey:  caKey,
 		caPEM:  append([]byte(nil), certPEM...),
 		leaves: make(map[string]*tls.Certificate),
+		now:    time.Now,
 	}, nil
 }
 
@@ -179,11 +186,12 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if certificate := m.leaves[host]; certificate != nil {
+	now := m.now()
+	if certificate := m.leaves[host]; certificate != nil && now.Add(leafRefreshBefore).Before(certificate.Leaf.NotAfter) {
 		return certificate, nil
 	}
 
-	certificate, err := m.createLeaf(host)
+	certificate, err := m.createLeaf(host, now)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +199,7 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 	return certificate, nil
 }
 
-func (m *Manager) createLeaf(host string) (*tls.Certificate, error) {
+func (m *Manager) createLeaf(host string, now time.Time) (*tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate leaf key: %w", err)
@@ -200,12 +208,11 @@ func (m *Manager) createLeaf(host string) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate leaf serial: %w", err)
 	}
-	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: host},
 		NotBefore:    now.Add(-5 * time.Minute),
-		NotAfter:     now.Add(24 * time.Hour),
+		NotAfter:     now.Add(leafValidity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -227,6 +234,11 @@ func (m *Manager) createLeaf(host string) (*tls.Certificate, error) {
 	certificate, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("build leaf key pair: %w", err)
+	}
+	if certificate.Leaf == nil {
+		if certificate.Leaf, err = x509.ParseCertificate(der); err != nil {
+			return nil, fmt.Errorf("parse leaf certificate: %w", err)
+		}
 	}
 	return &certificate, nil
 }
