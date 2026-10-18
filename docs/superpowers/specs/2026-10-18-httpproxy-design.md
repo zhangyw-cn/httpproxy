@@ -255,4 +255,4 @@ httpproxy/
 
 - 方案：自研 MITM + 开发期热更新 / 发布 embed（对话确认）  
 - 设计 §1–§5：用户逐节确认 OK（2026-10-18）  
-- UI 修订：壳层参考 VS Code/GitHub，抓包工作区参考 Chrome DevTools Network（2026-10-18，待用户确认本文档修订）  
+- UI 修订：壳层参考 VS Code/GitHub，抓包工作区参考 Chrome DevTools Network（2026-10-18，用户确认 OK）  
