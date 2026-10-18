@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -386,12 +387,17 @@ func TestProxyHTTPSMITMUsesConnectAuthorityOverInnerHost(t *testing.T) {
 }
 
 func TestProxyHTTP2(t *testing.T) {
+	var upstreamConnections atomic.Int32
 	upstream := newH2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ProtoMajor != 2 {
 			t.Errorf("upstream got proto %s", r.Proto)
 		}
 		_, _ = io.WriteString(w, "h2ok")
-	}))
+	}), func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			upstreamConnections.Add(1)
+		}
+	})
 	defer upstream.Close()
 
 	manager, err := cert.LoadOrCreate(t.TempDir())
@@ -439,16 +445,69 @@ func TestProxyHTTP2(t *testing.T) {
 	if string(body) != "h2ok" {
 		t.Fatalf("got %q", body)
 	}
+	resp, err = client.Get(upstream.URL + "/h2-again")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := upstreamConnections.Load(); got != 1 {
+		t.Fatalf("upstream HTTP/2 connections = %d, want 1", got)
+	}
 	f := waitUpdatedFlow(t, sink)
 	if f.HTTPVersion != "2" {
 		t.Fatalf("want http version 2, got %q", f.HTTPVersion)
 	}
 }
 
-func newH2TLSServer(t *testing.T, handler http.Handler) *httptest.Server {
+func TestHTTP2ResponseCaptureFinishesAfterClientWriteFailure(t *testing.T) {
+	upstream := newH2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ab")
+		w.(http.Flusher).Flush()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = io.WriteString(w, "cdef")
+	}))
+	defer upstream.Close()
+
+	sink := &memSink{}
+	p := New("", sink, 4, nil)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}
+	req := httptest.NewRequest(http.MethodGet, "https://"+upstream.Listener.Addr().String()+"/", nil)
+	p.handleHTTP2Request(failingResponseWriter{header: make(http.Header)}, req, upstream.Listener.Addr().String())
+
+	f := waitUpdatedFlow(t, sink)
+	if string(f.RespBody) != "abcd" || f.RespSize != 6 || !f.RespTruncated {
+		t.Fatalf("response capture: body=%q size=%d truncated=%t", f.RespBody, f.RespSize, f.RespTruncated)
+	}
+	if f.Error == "" {
+		t.Fatal("flow did not record the client write failure")
+	}
+}
+
+type failingResponseWriter struct {
+	header http.Header
+}
+
+func (w failingResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (failingResponseWriter) WriteHeader(int) {}
+
+func (failingResponseWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
+func newH2TLSServer(t *testing.T, handler http.Handler, connState ...func(net.Conn, http.ConnState)) *httptest.Server {
 	t.Helper()
 	server := httptest.NewUnstartedServer(handler)
 	server.TLS = &tls.Config{NextProtos: []string{"h2"}}
+	if len(connState) > 0 {
+		server.Config.ConnState = connState[0]
+	}
 	if err := http2.ConfigureServer(server.Config, &http2.Server{}); err != nil {
 		t.Fatal(err)
 	}

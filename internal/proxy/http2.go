@@ -80,7 +80,7 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	responseCapture := newBodyCapture(p.maxBody)
 	_, writeErr := io.Copy(w, io.TeeReader(resp.Body, responseCapture))
 	if writeErr != nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(responseCapture, resp.Body)
 		f.Error = writeErr.Error()
 	}
 	f.RespBody, f.RespSize, f.RespTruncated = responseCapture.result()
@@ -89,14 +89,18 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 }
 
 func (p *Proxy) roundTripHTTP2(req *http.Request) (*http.Response, error) {
-	tlsConfig := &tls.Config{}
-	if p.UpstreamTLS != nil {
-		tlsConfig = p.UpstreamTLS.Clone()
+	p.mu.Lock()
+	if p.h2Transport == nil {
+		tlsConfig := &tls.Config{}
+		if p.UpstreamTLS != nil {
+			tlsConfig = p.UpstreamTLS.Clone()
+		}
+		p.h2Transport = &http2.Transport{
+			TLSClientConfig:    tlsConfig,
+			DisableCompression: true,
+		}
 	}
-	transport := &http2.Transport{
-		TLSClientConfig:    tlsConfig,
-		DisableCompression: true,
-	}
-	defer transport.CloseIdleConnections()
+	transport := p.h2Transport
+	p.mu.Unlock()
 	return transport.RoundTrip(req)
 }

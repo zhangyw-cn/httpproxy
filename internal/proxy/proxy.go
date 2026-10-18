@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 
+	"golang.org/x/net/http2"
+
 	"httpproxy/internal/cert"
 )
 
@@ -19,11 +21,12 @@ type Proxy struct {
 	// UpstreamTLS is nil in production so system roots are used.
 	UpstreamTLS *tls.Config
 
-	mu        sync.Mutex
-	listener  net.Listener
-	conns     map[net.Conn]struct{}
-	closed    bool
-	transport *http.Transport
+	mu          sync.Mutex
+	listener    net.Listener
+	conns       map[net.Conn]struct{}
+	closed      bool
+	transport   *http.Transport
+	h2Transport *http2.Transport
 }
 
 func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
@@ -100,6 +103,7 @@ func (p *Proxy) Close() error {
 	for conn := range p.conns {
 		conns = append(conns, conn)
 	}
+	h2Transport := p.h2Transport
 	p.mu.Unlock()
 
 	var closeErr error
@@ -110,6 +114,9 @@ func (p *Proxy) Close() error {
 		_ = conn.Close()
 	}
 	p.transport.CloseIdleConnections()
+	if h2Transport != nil {
+		h2Transport.CloseIdleConnections()
+	}
 	return closeErr
 }
 
