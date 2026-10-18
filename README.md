@@ -80,22 +80,22 @@ the trust store when it is no longer needed.
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `-proxy` | `:8080` | Proxy listen address |
-| `-ui` | `:8081` | Web UI listen address |
+| `-proxy` | `127.0.0.1:8080` | Proxy listen address (loopback by default) |
+| `-ui` | `127.0.0.1:8081` | Web UI listen address (loopback by default; Host allowlist applied) |
 | `-max-flows` | `1000` | Maximum number of flows retained in memory |
-| `-max-body` | `1048576` | Maximum stored bytes per request or response body |
+| `-max-body` | `1048576` | Maximum stored bytes per request/response body (and decoded UI copy) |
 | `-ca-dir` | `~/.httpproxy` | Directory containing the generated CA certificate and key |
 
-Example:
+Example (LAN access — only if you accept that decrypted traffic is exposed):
 
 ```sh
-./bin/httpproxy -proxy 127.0.0.1:8888 -ui 127.0.0.1:8889 \
+./bin/httpproxy -proxy 0.0.0.0:8080 -ui 0.0.0.0:8081 \
   -max-flows 2000 -max-body 2097152
 ```
 
-Use explicit loopback addresses, as above, if the proxy and UI must only be
-reachable from the local machine. The default `:8080` and `:8081` addresses
-listen on all interfaces.
+The UI rejects non-loopback `Host` headers unless you also allow the listen
+host via the built-in allowlist (loopback plus the `-ui` bind host). Prefer
+keeping the default loopback bind for day-to-day use.
 
 ## Development mode
 
@@ -121,3 +121,11 @@ Open the URL printed by Vite (normally <http://localhost:5173>). Vite proxies
 Certificate-pinned and mutual-TLS applications generally cannot be inspected.
 HTTP/3, SOCKS, transparent proxying, upstream proxy chaining, request
 modification, replay, and persistent capture storage are outside the v1 scope.
+
+Additional v1 notes:
+
+- **Memory:** each retained flow may keep up to three `max-body`-sized buffers
+  (request, raw response, decoded response). Worst case ≈ `max-flows × 3 × max-body`.
+- **WebSocket:** cleartext/HTTPS Upgrade is tunneled when the upstream returns
+  `101 Switching Protocols`; frame-level capture is not implemented.
+- **Self-proxy:** requests whose target is the proxy's own listen address are refused.

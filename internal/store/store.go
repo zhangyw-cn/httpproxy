@@ -29,7 +29,8 @@ func New(max int) *Store {
 	return &Store{max: max, byID: make(map[string]flow.Flow)}
 }
 
-func (s *Store) Add(f flow.Flow) {
+// Add inserts f and returns IDs evicted by the ring buffer (oldest first).
+func (s *Store) Add(f flow.Flow) (evicted []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -45,7 +46,16 @@ func (s *Store) Add(f flow.Flow) {
 		oldest := s.order[0]
 		s.order = s.order[1:]
 		delete(s.byID, oldest)
+		evicted = append(evicted, oldest)
 	}
+	return evicted
+}
+
+// Max returns the ring capacity.
+func (s *Store) Max() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.max
 }
 
 func (s *Store) Update(f flow.Flow) bool {

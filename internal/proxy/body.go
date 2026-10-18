@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
@@ -61,36 +62,30 @@ func readLimited(r io.Reader, max int64) (data []byte, total int64, truncated bo
 	return data, total, truncated, err
 }
 
-// prepareRequestBody buffers at most max+1 bytes of the client body so the
-// created Flow can show it, then streams the remainder to upstream while the
-// capture keeps counting. On success it replaces req.Body (and fixes
-// ContentLength when the whole body fit in the prefix).
-func prepareRequestBody(req *http.Request, max int64) (*bodyCapture, error) {
+type teeReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// streamRequestBody tees the client body into a capture while forwarding
+// upstream immediately (no prefix buffering). ReqBody is filled as bytes pass
+// through; OnCreated may see an empty body until OnUpdated.
+func streamRequestBody(req *http.Request, max int64) *bodyCapture {
 	capture := newBodyCapture(max)
 	if req.Body == nil || req.Body == http.NoBody {
-		return capture, nil
+		return capture
 	}
-	prefix, err := io.ReadAll(io.LimitReader(req.Body, max+1))
-	_, _ = capture.Write(prefix)
-	if err != nil {
-		return capture, err
+	body := req.Body
+	req.Body = &teeReadCloser{
+		Reader: io.TeeReader(body, capture),
+		Closer: body,
 	}
-	if int64(len(prefix)) <= max {
-		req.ContentLength = int64(len(prefix))
-		if len(prefix) == 0 {
-			req.Body = http.NoBody
-		} else {
-			req.Body = io.NopCloser(bytes.NewReader(prefix))
-		}
-		return capture, nil
-	}
-	rest := io.TeeReader(req.Body, capture)
-	req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), rest))
-	return capture, nil
+	return capture
 }
 
 // decodeForDisplay returns a decompressed copy of a captured body for the UI,
-// capped at max bytes. A truncated capture yields a best-effort partial decode.
+// capped at max bytes. Nested encodings are applied with a per-layer output
+// limit so a compression bomb cannot expand past max.
 func decodeForDisplay(body []byte, headers http.Header, max int64) []byte {
 	if len(body) == 0 || max <= 0 {
 		return nil
@@ -107,11 +102,16 @@ func decodeForDisplay(body []byte, headers http.Header, max int64) []byte {
 			if err != nil {
 				return nil
 			}
-			r = gz
+			// Cap each layer's decompressed output to stop nested bombs.
+			r = io.LimitReader(gz, max)
 		case "deflate":
-			r = newDeflateReader(r)
+			dr, err := newDeflateReader(r)
+			if err != nil {
+				return nil
+			}
+			r = io.LimitReader(dr, max)
 		case "br":
-			r = brotli.NewReader(r)
+			r = io.LimitReader(brotli.NewReader(r), max)
 		default:
 			return nil
 		}
@@ -127,15 +127,17 @@ func decodeForDisplay(body []byte, headers http.Header, max int64) []byte {
 	return out
 }
 
-// newDeflateReader accepts both zlib-wrapped (RFC 1950) and raw deflate data,
-// since servers send either for "Content-Encoding: deflate".
-func newDeflateReader(r io.Reader) io.Reader {
-	data, err := io.ReadAll(r)
-	if err != nil && len(data) == 0 {
-		return bytes.NewReader(nil)
+// newDeflateReader accepts both zlib-wrapped (RFC 1950) and raw deflate data.
+// It peeks at most 2 bytes and never buffers the whole stream.
+func newDeflateReader(r io.Reader) (io.ReadCloser, error) {
+	br := bufio.NewReader(r)
+	hdr, err := br.Peek(2)
+	if err != nil && err != io.EOF && len(hdr) < 2 {
+		return io.NopCloser(bytes.NewReader(nil)), nil
 	}
-	if len(data) >= 2 && data[0]&0x0f == 8 && (uint16(data[0])<<8|uint16(data[1]))%31 == 0 {
-		return flate.NewReader(bytes.NewReader(data[2:]))
+	if len(hdr) >= 2 && hdr[0]&0x0f == 8 && (uint16(hdr[0])<<8|uint16(hdr[1]))%31 == 0 {
+		_, _ = br.Discard(2)
+		return flate.NewReader(br), nil
 	}
-	return flate.NewReader(bytes.NewReader(data))
+	return flate.NewReader(br), nil
 }

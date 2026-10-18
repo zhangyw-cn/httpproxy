@@ -1,15 +1,20 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"httpproxy/internal/cert"
 )
+
+var errSelfProxy = errors.New("refusing to proxy to the proxy's own listen address")
 
 type Proxy struct {
 	addr    string
@@ -147,4 +152,88 @@ func (p *Proxy) Addr() string {
 		return ""
 	}
 	return p.listener.Addr().String()
+}
+
+// roundTrip forwards req. When upstreamSNI is set (HTTPS MITM with a DNS SNI
+// while CONNECT targeted an IP), TLS uses that name for certificate verification
+// while still dialing req.URL.Host.
+func (p *Proxy) roundTrip(req *http.Request, upstreamSNI string) (*http.Response, error) {
+	tr := p.upstream()
+	if upstreamSNI == "" || !strings.EqualFold(req.URL.Scheme, "https") {
+		return tr.RoundTrip(req)
+	}
+	dialHost := req.URL.Host
+	sniHost := hostWithoutPort(upstreamSNI)
+	if sniHost == "" || strings.EqualFold(sniHost, hostWithoutPort(dialHost)) {
+		return tr.RoundTrip(req)
+	}
+	baseTLS := tr.TLSClientConfig
+	if baseTLS == nil {
+		baseTLS = &tls.Config{}
+	}
+	tlsCfg := baseTLS.Clone()
+	tlsCfg.ServerName = sniHost
+	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
+	custom := &http.Transport{
+		Proxy:                 tr.Proxy,
+		DialContext:           tr.DialContext,
+		ForceAttemptHTTP2:     true,
+		DisableCompression:    true,
+		MaxIdleConns:          tr.MaxIdleConns,
+		IdleConnTimeout:       tr.IdleConnTimeout,
+		TLSHandshakeTimeout:   tr.TLSHandshakeTimeout,
+		ExpectContinueTimeout: tr.ExpectContinueTimeout,
+		TLSClientConfig:       tlsCfg,
+		DialTLSContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+			raw, err := d.DialContext(ctx, network, dialHost)
+			if err != nil {
+				return nil, err
+			}
+			tc := tls.Client(raw, tlsCfg)
+			if err := tc.HandshakeContext(ctx); err != nil {
+				_ = raw.Close()
+				return nil, err
+			}
+			return tc, nil
+		},
+	}
+	return custom.RoundTrip(req)
+}
+
+func (p *Proxy) isLoopbackTarget(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	target := u.Host
+	if target == "" {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.listener == nil {
+		return false
+	}
+	self := p.listener.Addr().String()
+	if target == self || target == p.addr {
+		return true
+	}
+	// Compare host:port when addr is ":8080" style vs concrete.
+	th, tp, err1 := net.SplitHostPort(target)
+	sh, sp, err2 := net.SplitHostPort(self)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if tp != sp {
+		return false
+	}
+	if th == "" || th == "0.0.0.0" || th == "::" {
+		return false
+	}
+	return th == sh || (isLocalIP(th) && isLocalIP(sh))
+}
+
+func isLocalIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

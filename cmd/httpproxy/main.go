@@ -3,9 +3,11 @@ package main
 import (
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"httpproxy/internal/api"
 	"httpproxy/internal/cert"
@@ -15,8 +17,8 @@ import (
 )
 
 func main() {
-	proxyAddr := flag.String("proxy", ":8080", "proxy listen address")
-	uiAddr := flag.String("ui", ":8081", "web UI listen address")
+	proxyAddr := flag.String("proxy", "127.0.0.1:8080", "proxy listen address")
+	uiAddr := flag.String("ui", "127.0.0.1:8081", "web UI listen address (default loopback)")
 	maxFlows := flag.Int("max-flows", 1000, "max retained flows")
 	maxBody := flag.Int64("max-body", 1<<20, "max stored body bytes per side")
 	caDir := flag.String("ca-dir", "", "CA directory (default ~/.httpproxy)")
@@ -45,11 +47,22 @@ func main() {
 	root.Handle("/ws/flows", apiHandler)
 	root.Handle("/", ui.Handler())
 
+	uiHost := listenHost(*uiAddr)
+	handler := api.LocalOnly(root, uiHost, *uiAddr)
+
 	go func() {
-		log.Printf("UI on %s", *uiAddr)
-		log.Fatal(http.ListenAndServe(*uiAddr, root))
+		log.Printf("UI on %s (loopback-restricted Host check)", *uiAddr)
+		log.Fatal(http.ListenAndServe(*uiAddr, handler))
 	}()
 
 	log.Printf("proxy on %s (CA %s)", *proxyAddr, dir)
 	log.Fatal(proxyServer.ListenAndServe())
+}
+
+func listenHost(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return strings.TrimSpace(addr)
+	}
+	return host
 }

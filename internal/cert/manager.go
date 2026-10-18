@@ -39,6 +39,7 @@ type Manager struct {
 const (
 	leafValidity      = 24 * time.Hour
 	leafRefreshBefore = time.Hour
+	maxCachedLeaves   = 1024
 )
 
 func LoadOrCreate(caDir string) (*Manager, error) {
@@ -185,17 +186,38 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	now := m.now()
-	if certificate := m.leaves[host]; certificate != nil && now.Add(leafRefreshBefore).Before(certificate.Leaf.NotAfter) {
+	if certificate := m.leaves[host]; certificate != nil && certificate.Leaf != nil &&
+		now.Add(leafRefreshBefore).Before(certificate.Leaf.NotAfter) {
+		m.mu.Unlock()
 		return certificate, nil
 	}
+	m.mu.Unlock()
 
+	// Sign outside the lock so concurrent handshakes for new hosts are not serialized.
 	certificate, err := m.createLeaf(host, now)
 	if err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing := m.leaves[host]; existing != nil && existing.Leaf != nil &&
+		m.now().Add(leafRefreshBefore).Before(existing.Leaf.NotAfter) {
+		return existing, nil
+	}
 	m.leaves[host] = certificate
+	for len(m.leaves) > maxCachedLeaves {
+		// Drop an arbitrary entry other than the one we just inserted.
+		for cachedHost := range m.leaves {
+			if cachedHost == host {
+				continue
+			}
+			delete(m.leaves, cachedHost)
+			break
+		}
+		break
+	}
 	return certificate, nil
 }
 

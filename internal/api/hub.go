@@ -14,8 +14,9 @@ import (
 const clientQueueSize = 64
 
 type Event struct {
-	Type string            `json:"type"`
-	Flow *flow.FlowSummary `json:"flow,omitempty"`
+	Type   string            `json:"type"`
+	Flow   *flow.FlowSummary `json:"flow,omitempty"`
+	FlowID string            `json:"flow_id,omitempty"`
 }
 
 type Hub struct {

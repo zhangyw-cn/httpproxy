@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { clearFlows, connectFlowsWS, getFlow, listFlows } from './api'
+import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows } from './api'
 import FilterBar from './components/FilterBar'
 import FlowDetail from './components/FlowDetail'
 import FlowTable from './components/FlowTable'
@@ -20,31 +20,45 @@ function matches(f: FlowSummary, flt: Filters): boolean {
   return f.host.includes(flt.host) && f.path.includes(flt.path) && matchStatus(f.status_code, flt.status)
 }
 
+function trimOldest(list: FlowSummary[], max: number): FlowSummary[] {
+  if (max <= 0 || list.length <= max) return list
+  return list.slice(list.length - max)
+}
+
 export default function App() {
   const [flows, setFlows] = useState<FlowSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters>({ host: '', path: '', status: '' })
   const [detail, setDetail] = useState<Flow | null>(null)
   const [loading, setLoading] = useState(false)
+  const [maxFlows, setMaxFlows] = useState(1000)
   const filtersRef = useRef(filters)
+  const maxFlowsRef = useRef(maxFlows)
   filtersRef.current = filters
+  maxFlowsRef.current = maxFlows
+
+  useEffect(() => {
+    getConfig()
+      .then((c) => {
+        if (c.max_flows > 0) setMaxFlows(c.max_flows)
+      })
+      .catch(() => { /* keep default */ })
+  }, [])
 
   const refetch = useCallback(async () => {
     try {
       const list = await listFlows(filtersRef.current)
-      setFlows([...list].reverse()) // server is newest-first; Network shows oldest-first
+      setFlows(trimOldest([...list].reverse(), maxFlowsRef.current))
     } catch {
       /* keep current state; WS reconnect will retry */
     }
   }, [])
 
-  // Refetch on filter change (debounced).
   useEffect(() => {
     const t = window.setTimeout(refetch, 150)
     return () => window.clearTimeout(t)
   }, [filters, refetch])
 
-  // WebSocket: merge events; refetch on every (re)connect.
   useEffect(() => {
     return connectFlowsWS(
       (ev) => {
@@ -53,25 +67,32 @@ export default function App() {
           setSelectedId(null)
           return
         }
+        if (ev.type === 'flow.evicted' && ev.flow_id) {
+          const id = ev.flow_id
+          setFlows((prev) => prev.filter((p) => p.id !== id))
+          setSelectedId((cur) => (cur === id ? null : cur))
+          return
+        }
         const f = ev.flow
         if (!f) return
         setFlows((prev) => {
           const idx = prev.findIndex((p) => p.id === f.id)
           const ok = matches(f, filtersRef.current)
+          let next: FlowSummary[]
           if (idx >= 0) {
-            const next = prev.slice()
+            next = prev.slice()
             if (ok) next[idx] = f
             else next.splice(idx, 1)
-            return next
+          } else {
+            next = ok ? [...prev, f] : prev
           }
-          return ok ? [...prev, f] : prev
+          return trimOldest(next, maxFlowsRef.current)
         })
       },
       () => void refetch(),
     )
   }, [refetch])
 
-  // Detail fetch on selection; refresh when the selected flow updates.
   const selected = flows.find((f) => f.id === selectedId)
   const selectedStamp = selected ? `${selected.status_code}|${selected.resp_size}|${selected.duration_ms}|${selected.error ?? ''}` : ''
   useEffect(() => {

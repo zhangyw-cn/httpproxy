@@ -33,12 +33,17 @@ export interface Flow extends FlowSummary {
 }
 
 export interface FlowEvent {
-  type: 'flow.created' | 'flow.updated' | 'flows.cleared' | string
+  type: 'flow.created' | 'flow.updated' | 'flows.cleared' | 'flow.evicted' | string
   flow?: FlowSummary
+  flow_id?: string
 }
 
 export interface Filters {
   host: string
   path: string
   status: string
+}
+
+export interface AppConfig {
+  max_flows: number
 }

@@ -57,7 +57,9 @@ function Body({ text, truncated, size }: { text: string; truncated: boolean; siz
   return (
     <>
       {truncated && (
-        <div className="notice">Body truncated — showing first {formatSize(text.length)} of {formatSize(size)}.</div>
+        <div className="notice">
+          Body truncated — stored preview is limited; original transfer size {formatSize(size)}.
+        </div>
       )}
       <pre className="body">{text}</pre>
     </>

@@ -11,13 +11,18 @@ type StoreSink struct {
 }
 
 func (s *StoreSink) OnCreated(f flow.Flow) {
-	s.Store.Add(f)
+	evicted := s.Store.Add(f)
 	summary := f.Summary()
 	s.Hub.Broadcast(Event{Type: "flow.created", Flow: &summary})
+	for _, id := range evicted {
+		s.Hub.Broadcast(Event{Type: "flow.evicted", FlowID: id})
+	}
 }
 
 func (s *StoreSink) OnUpdated(f flow.Flow) {
-	s.Store.Update(f)
+	if !s.Store.Update(f) {
+		return
+	}
 	summary := f.Summary()
 	s.Hub.Broadcast(Event{Type: "flow.updated", Flow: &summary})
 }

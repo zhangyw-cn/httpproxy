@@ -49,6 +49,7 @@ func (s *Server) ClientCount() int {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.health)
+	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("GET /api/flows", s.listFlows)
 	s.mux.HandleFunc("GET /api/flows/{id}", s.getFlow)
 	s.mux.HandleFunc("DELETE /api/flows", s.clearFlows)
@@ -60,6 +61,12 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		OK bool `json:"ok"`
 	}{OK: true})
+}
+
+func (s *Server) config(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, struct {
+		MaxFlows int `json:"max_flows"`
+	}{MaxFlows: s.store.Max()})
 }
 
 func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {

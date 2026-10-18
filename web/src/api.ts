@@ -1,4 +1,10 @@
-import type { Filters, Flow, FlowEvent, FlowSummary } from './types'
+import type { AppConfig, Filters, Flow, FlowEvent, FlowSummary } from './types'
+
+export async function getConfig(): Promise<AppConfig> {
+  const r = await fetch('/api/config')
+  if (!r.ok) throw new Error(`config: ${r.status}`)
+  return r.json()
+}
 
 export async function listFlows(params: Partial<Filters>): Promise<FlowSummary[]> {
   const q = new URLSearchParams()

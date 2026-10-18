@@ -17,7 +17,10 @@ import (
 	"httpproxy/internal/flow"
 )
 
-const tlsHandshakeTimeout = 10 * time.Second
+const (
+	tlsHandshakeTimeout = 10 * time.Second
+	idleReadTimeout     = 120 * time.Second
+)
 
 // hopHeaders are connection-specific and must not be forwarded (RFC 9110 7.6.1).
 var hopHeaders = []string{
@@ -46,16 +49,18 @@ func (c *bufferedConn) Read(p []byte) (int, error) {
 func (p *Proxy) handleHTTP1(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(idleReadTimeout))
 		req, err := http.ReadRequest(reader)
 		if err != nil {
 			return
 		}
+		_ = conn.SetReadDeadline(time.Time{})
 		if req.Method == http.MethodConnect {
 			_ = req.Body.Close()
 			p.handleConnect(&bufferedConn{Conn: conn, r: reader}, req)
 			return
 		}
-		if !p.handleRequest(conn, req, "http", "") {
+		if !p.handleRequest(conn, req, "http", "", "") {
 			return
 		}
 	}
@@ -78,8 +83,12 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 	if connectHost == "" {
 		connectHost = hostWithoutPort(connectReq.Host)
 	}
+	var clientSNI string
 	tlsConn := tls.Server(conn, &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if hello != nil && hello.ServerName != "" {
+				clientSNI = hello.ServerName
+			}
 			if hello.ServerName != "" || connectHost == "" {
 				return p.ca.GetCertificate(hello)
 			}
@@ -99,17 +108,19 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 	}
 	_ = conn.SetDeadline(time.Time{})
 	if tlsConn.ConnectionState().NegotiatedProtocol == "h2" {
-		p.handleHTTP2(tlsConn, connectAuthority)
+		p.handleHTTP2(tlsConn, connectAuthority, clientSNI)
 		return
 	}
 
 	reader := bufio.NewReader(tlsConn)
 	for {
+		_ = tlsConn.SetReadDeadline(time.Now().Add(idleReadTimeout))
 		req, err := http.ReadRequest(reader)
 		if err != nil {
 			return
 		}
-		if !p.handleRequest(tlsConn, req, "https", connectAuthority) {
+		_ = tlsConn.SetReadDeadline(time.Time{})
+		if !p.handleRequest(tlsConn, req, "https", connectAuthority, clientSNI) {
 			return
 		}
 	}
@@ -133,11 +144,12 @@ func (p *Proxy) recordTLSFailure(conn net.Conn, authority string, started time.T
 	p.updated(f)
 }
 
-func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultHost string) bool {
+func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultHost, upstreamSNI string) bool {
 	started := time.Now()
 	clientBody := req.Body
 	defer clientBody.Close()
 	clientClose := req.Close
+	websocket := isWebSocketRequest(req)
 
 	host := defaultHost
 	if host == "" {
@@ -153,15 +165,7 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 		StartedAt:   started,
 		ClientAddr:  conn.RemoteAddr().String(),
 	}
-	reqCapture, readErr := p.startFlow(req, &f)
-	if readErr != nil {
-		f.StatusCode = http.StatusBadRequest
-		f.Error = readErr.Error()
-		finishFlow(&f, started)
-		p.updated(f)
-		writeResponse(conn, http.StatusBadRequest, "Bad Request\n")
-		return false
-	}
+	reqCapture := p.startFlow(req, &f)
 
 	if defaultHost != "" {
 		req.URL.Scheme = scheme
@@ -172,9 +176,14 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 			req.URL.Host = host
 		}
 	}
-	prepareOutgoing(req)
+	if p.isLoopbackTarget(req.URL) {
+		p.failUpstream(&f, reqCapture, req, errSelfProxy)
+		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
+		return false
+	}
+	prepareOutgoing(req, websocket)
 
-	resp, err := p.upstream().RoundTrip(req)
+	resp, err := p.roundTrip(req, upstreamSNI)
 	if err != nil {
 		p.failUpstream(&f, reqCapture, req, err)
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
@@ -184,6 +193,11 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 
 	f.StatusCode = resp.StatusCode
 	f.RespHeaders = copyHeaders(resp.Header)
+
+	if websocket && resp.StatusCode == http.StatusSwitchingProtocols {
+		return p.tunnelWebSocket(conn, req, resp, &f, reqCapture, started)
+	}
+
 	respCapture := newBodyCapture(p.maxBody)
 	resp.Body = struct {
 		io.Reader
@@ -193,7 +207,7 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 		Closer: resp.Body,
 	}
 
-	closeAfter := normalizeForHTTP1Client(resp, req.Method, clientClose)
+	closeAfter := normalizeForHTTP1Client(resp, req, clientClose)
 	writeErr := resp.Write(conn)
 	if writeErr != nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -203,36 +217,94 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	return writeErr == nil && !closeAfter
 }
 
+func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Response, f *flow.Flow, reqCapture *bodyCapture, started time.Time) bool {
+	// Write the 101 response headers to the client, then bidirectional copy.
+	// For 101, Transport exposes Body as a ReadWriteCloser (net/http docs).
+	removeHopHeadersPreserveUpgrade(resp.Header)
+	resp.Proto = "HTTP/1.1"
+	resp.ProtoMajor = 1
+	resp.ProtoMinor = 1
+	resp.Close = false
+	upstreamConn, ok := resp.Body.(io.ReadWriteCloser)
+	if !ok {
+		_ = resp.Body.Close()
+		f.Error = "websocket upgrade: upstream body is not duplex"
+		p.setRequestCapture(f, reqCapture, req)
+		finishFlow(f, started)
+		p.updated(*f)
+		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
+		return false
+	}
+	// Detach body so defer in caller does not close mid-tunnel.
+	resp.Body = http.NoBody
+	if err := resp.Write(conn); err != nil {
+		_ = upstreamConn.Close()
+		f.Error = err.Error()
+		p.setRequestCapture(f, reqCapture, req)
+		finishFlow(f, started)
+		p.updated(*f)
+		return false
+	}
+	p.setRequestCapture(f, reqCapture, req)
+	finishFlow(f, started)
+	p.updated(*f)
+
+	errCh := make(chan error, 2)
+	go func() {
+		_, err := io.Copy(upstreamConn, conn)
+		errCh <- err
+	}()
+	go func() {
+		_, err := io.Copy(conn, upstreamConn)
+		errCh <- err
+	}()
+	<-errCh
+	_ = upstreamConn.Close()
+	return false
+}
+
+func isWebSocketRequest(req *http.Request) bool {
+	return strings.EqualFold(req.Header.Get("Upgrade"), "websocket")
+}
+
 // normalizeForHTTP1Client rewrites an upstream response (HTTP/1.x or h2) so it
 // can be serialized to an HTTP/1.1 client, and reports whether the client
 // connection must be closed afterwards.
-func normalizeForHTTP1Client(resp *http.Response, method string, clientClose bool) bool {
+func normalizeForHTTP1Client(resp *http.Response, req *http.Request, clientClose bool) bool {
 	removeHopHeaders(resp.Header)
 	resp.Proto = "HTTP/1.1"
 	resp.ProtoMajor = 1
 	resp.ProtoMinor = 1
 	resp.Trailer = nil
 
+	method := req.Method
+	http10 := req.ProtoMajor == 1 && req.ProtoMinor == 0
 	hasBody := method != http.MethodHead && resp.StatusCode >= 200 &&
 		resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotModified
+
+	closeAfter := clientClose || (method == http.MethodHead && resp.ContentLength < 0)
 	if hasBody && resp.ContentLength < 0 {
-		resp.TransferEncoding = []string{"chunked"}
+		if http10 {
+			// HTTP/1.0 clients do not understand chunked encoding; close to delimit.
+			resp.TransferEncoding = nil
+			closeAfter = true
+		} else {
+			resp.TransferEncoding = []string{"chunked"}
+		}
 	} else {
 		resp.TransferEncoding = nil
 	}
-	closeAfter := clientClose || (method == http.MethodHead && resp.ContentLength < 0)
 	resp.Close = closeAfter
 	return closeAfter
 }
 
-// startFlow buffers a bounded prefix of the request body, emits the created
-// Flow and leaves req.Body streaming the full body for upstream.
-func (p *Proxy) startFlow(req *http.Request, f *flow.Flow) (*bodyCapture, error) {
+// startFlow attaches a streaming body tee and emits the created Flow (headers
+// only until bytes pass through the tee).
+func (p *Proxy) startFlow(req *http.Request, f *flow.Flow) *bodyCapture {
 	f.ReqHeaders = copyHeaders(req.Header)
-	reqCapture, err := prepareRequestBody(req, p.maxBody)
-	p.setRequestCapture(f, reqCapture, req)
+	reqCapture := streamRequestBody(req, p.maxBody)
 	p.created(*f)
-	return reqCapture, err
+	return reqCapture
 }
 
 func (p *Proxy) setRequestCapture(f *flow.Flow, reqCapture *bodyCapture, req *http.Request) {
@@ -259,9 +331,13 @@ func (p *Proxy) finishResponse(f *flow.Flow, reqCapture *bodyCapture, req *http.
 	p.updated(*f)
 }
 
-func prepareOutgoing(req *http.Request) {
+func prepareOutgoing(req *http.Request, websocket bool) {
 	req.RequestURI = ""
 	req.Close = false
+	if websocket {
+		removeHopHeadersPreserveUpgrade(req.Header)
+		return
+	}
 	removeHopHeaders(req.Header)
 }
 
@@ -274,6 +350,16 @@ func removeHopHeaders(header http.Header) {
 		}
 	}
 	for _, name := range hopHeaders {
+		header.Del(name)
+	}
+}
+
+func removeHopHeadersPreserveUpgrade(header http.Header) {
+	// Strip hop-by-hop except Upgrade / Connection needed for WebSocket.
+	for _, name := range []string{
+		"Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
+		"Te", "Trailer", "Transfer-Encoding",
+	} {
 		header.Del(name)
 	}
 }
