@@ -50,6 +50,15 @@ func (s *memSink) counts() (created, updated int) {
 	return len(s.created), len(s.updated)
 }
 
+func (s *memSink) firstCreated() (flow.Flow, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.created) == 0 {
+		return flow.Flow{}, false
+	}
+	return s.created[0], true
+}
+
 func TestReadLimitedConsumesBodyAndReportsTotalSize(t *testing.T) {
 	r := bytes.NewBufferString("abcdef")
 
@@ -113,10 +122,18 @@ func TestProxyCleartextHTTPCapturesFlowAndFullBodies(t *testing.T) {
 	if _, err := uuid.Parse(f.ID); err != nil {
 		t.Fatalf("flow ID %q is not a UUID: %v", f.ID, err)
 	}
+	createdFlow, ok := sink.firstCreated()
+	if !ok {
+		t.Fatal("created flow was not captured")
+	}
+	if string(createdFlow.ReqBody) != "1234" || createdFlow.ReqSize != 6 || !createdFlow.ReqTruncated {
+		t.Fatalf("created request capture: body=%q size=%d truncated=%t",
+			createdFlow.ReqBody, createdFlow.ReqSize, createdFlow.ReqTruncated)
+	}
 	if f.Scheme != "http" || f.Method != http.MethodPost || f.Path != "/q?x=1" {
 		t.Fatalf("request metadata: %+v", f)
 	}
-	if f.Host == "" || f.HTTPVersion != "HTTP/1.1" || f.ClientAddr == "" {
+	if f.Host == "" || f.HTTPVersion != "1.1" || f.ClientAddr == "" {
 		t.Fatalf("connection metadata: %+v", f)
 	}
 	if f.StatusCode != http.StatusCreated || headerValue(f.RespHeaders, "X-Up") != "1" {
@@ -134,6 +151,52 @@ func TestProxyCleartextHTTPCapturesFlowAndFullBodies(t *testing.T) {
 	created, updated := sink.counts()
 	if created != 1 || updated != 1 {
 		t.Fatalf("sink calls: created=%d updated=%d", created, updated)
+	}
+}
+
+func TestProxyTransportLeavesUpstreamCompressionUntouched(t *testing.T) {
+	var acceptEncoding string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acceptEncoding = r.Header.Get("Accept-Encoding")
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = io.WriteString(w, "compressed-view")
+	}))
+	defer upstream.Close()
+
+	sink := &memSink{}
+	p := New("127.0.0.1:0", sink, 1024, nil)
+	if !p.transport.DisableCompression {
+		t.Fatal("upstream transport compression is enabled")
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.ListenAndServe() }()
+	t.Cleanup(func() {
+		_ = p.Close()
+		if err := <-errCh; err != nil {
+			t.Errorf("ListenAndServe: %v", err)
+		}
+	})
+
+	client := proxyClient(t, waitAddr(t, p))
+	client.Transport.(*http.Transport).DisableCompression = true
+	resp, err := client.Get(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acceptEncoding != "" {
+		t.Fatalf("upstream Accept-Encoding = %q", acceptEncoding)
+	}
+	if resp.Header.Get("Content-Encoding") != "gzip" || string(body) != "compressed-view" {
+		t.Fatalf("response was altered: encoding=%q body=%q", resp.Header.Get("Content-Encoding"), body)
+	}
+	f := waitUpdatedFlow(t, sink)
+	if string(f.RespBody) != "compressed-view" {
+		t.Fatalf("captured response body = %q", f.RespBody)
 	}
 }
 

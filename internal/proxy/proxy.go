@@ -27,12 +27,15 @@ func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
 		maxBody = 0
 	}
 	return &Proxy{
-		addr:      addr,
-		sink:      sink,
-		maxBody:   maxBody,
-		ca:        ca,
-		conns:     make(map[net.Conn]struct{}),
-		transport: &http.Transport{DisableKeepAlives: true},
+		addr:    addr,
+		sink:    sink,
+		maxBody: maxBody,
+		ca:      ca,
+		conns:   make(map[net.Conn]struct{}),
+		transport: &http.Transport{
+			DisableKeepAlives:  true,
+			DisableCompression: true,
+		},
 	}
 }
 

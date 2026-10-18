@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -27,27 +28,32 @@ func (p *Proxy) handleHTTP1(conn net.Conn) {
 	}
 
 	started := time.Now()
+	requestBody, readErr := io.ReadAll(req.Body)
+	requestCapture := newBodyCapture(p.maxBody)
+	_, _ = requestCapture.Write(requestBody)
 	f := flow.Flow{
 		ID:          uuid.NewString(),
 		Scheme:      "http",
 		Method:      req.Method,
 		Host:        req.Host,
 		Path:        req.URL.RequestURI(),
-		HTTPVersion: req.Proto,
+		HTTPVersion: fmt.Sprintf("%d.%d", req.ProtoMajor, req.ProtoMinor),
 		ReqHeaders:  copyHeaders(req.Header),
 		StartedAt:   started,
 		ClientAddr:  conn.RemoteAddr().String(),
 	}
+	f.ReqBody, f.ReqSize, f.ReqTruncated = requestCapture.result()
 	p.created(f)
 
-	requestCapture := newBodyCapture(p.maxBody)
-	req.Body = struct {
-		io.Reader
-		io.Closer
-	}{
-		Reader: io.TeeReader(req.Body, requestCapture),
-		Closer: req.Body,
+	if readErr != nil {
+		f.StatusCode = http.StatusBadRequest
+		f.Error = readErr.Error()
+		finishFlow(&f, started)
+		p.updated(f)
+		writeResponse(conn, http.StatusBadRequest, "Bad Request\n")
+		return
 	}
+	req.Body = io.NopCloser(bytes.NewReader(requestBody))
 	req.RequestURI = ""
 	if req.URL.Scheme == "" {
 		req.URL.Scheme = "http"
@@ -57,7 +63,6 @@ func (p *Proxy) handleHTTP1(conn net.Conn) {
 	}
 
 	resp, err := p.transport.RoundTrip(req)
-	f.ReqBody, f.ReqSize, f.ReqTruncated = requestCapture.result()
 	if err != nil {
 		f.StatusCode = http.StatusBadGateway
 		f.Error = err.Error()
