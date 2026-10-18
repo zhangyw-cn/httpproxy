@@ -6,8 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
-
-	"golang.org/x/net/http2"
+	"time"
 
 	"httpproxy/internal/cert"
 )
@@ -18,15 +17,15 @@ type Proxy struct {
 	maxBody int64
 	ca      *cert.Manager
 
-	// UpstreamTLS is nil in production so system roots are used.
+	// UpstreamTLS is nil in production so system roots are used. Its
+	// NextProtos are ignored: upstream ALPN always offers h2 and http/1.1.
 	UpstreamTLS *tls.Config
 
-	mu          sync.Mutex
-	listener    net.Listener
-	conns       map[net.Conn]struct{}
-	closed      bool
-	transport   *http.Transport
-	h2Transport *http2.Transport
+	mu        sync.Mutex
+	listener  net.Listener
+	conns     map[net.Conn]struct{}
+	closed    bool
+	transport *http.Transport
 }
 
 func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
@@ -39,11 +38,33 @@ func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
 		maxBody: maxBody,
 		ca:      ca,
 		conns:   make(map[net.Conn]struct{}),
-		transport: &http.Transport{
-			DisableKeepAlives:  true,
-			DisableCompression: true,
-		},
 	}
+}
+
+// upstream returns the shared client transport, built lazily so tests can set
+// UpstreamTLS after New. It negotiates h2 or HTTP/1.1 per upstream server,
+// independently of the protocol the client spoke to the proxy.
+func (p *Proxy) upstream() *http.Transport {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.transport == nil {
+		tlsConfig := &tls.Config{}
+		if p.UpstreamTLS != nil {
+			tlsConfig = p.UpstreamTLS.Clone()
+		}
+		tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+		p.transport = &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSClientConfig:       tlsConfig,
+			ForceAttemptHTTP2:     true,
+			DisableCompression:    true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+	}
+	return p.transport
 }
 
 func (p *Proxy) ListenAndServe() error {
@@ -103,7 +124,7 @@ func (p *Proxy) Close() error {
 	for conn := range p.conns {
 		conns = append(conns, conn)
 	}
-	h2Transport := p.h2Transport
+	transport := p.transport
 	p.mu.Unlock()
 
 	var closeErr error
@@ -113,9 +134,8 @@ func (p *Proxy) Close() error {
 	for _, conn := range conns {
 		_ = conn.Close()
 	}
-	p.transport.CloseIdleConnections()
-	if h2Transport != nil {
-		h2Transport.CloseIdleConnections()
+	if transport != nil {
+		transport.CloseIdleConnections()
 	}
 	return closeErr
 }

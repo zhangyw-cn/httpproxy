@@ -28,6 +28,8 @@ export interface Flow extends FlowSummary {
   resp_headers: Header[] | null
   req_body?: string
   resp_body?: string
+  /** Decompressed copy of resp_body when Content-Encoding was set. */
+  resp_body_decoded?: string
 }
 
 export interface FlowEvent {

@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"crypto/tls"
 	"io"
 	"net/http"
@@ -24,10 +23,10 @@ func (p *Proxy) handleHTTP2(conn *tls.Conn, connectAuthority string) {
 
 func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, connectAuthority string) {
 	started := time.Now()
-	requestBody, readErr := io.ReadAll(req.Body)
-	_ = req.Body.Close()
-	requestCapture := newBodyCapture(p.maxBody)
-	_, _ = requestCapture.Write(requestBody)
+	clientBody := req.Body
+	if clientBody != nil {
+		defer clientBody.Close()
+	}
 
 	f := flow.Flow{
 		ID:          uuid.NewString(),
@@ -36,13 +35,10 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 		Host:        connectAuthority,
 		Path:        req.URL.RequestURI(),
 		HTTPVersion: "2",
-		ReqHeaders:  copyHeaders(req.Header),
 		StartedAt:   started,
 		ClientAddr:  req.RemoteAddr,
 	}
-	f.ReqBody, f.ReqSize, f.ReqTruncated = requestCapture.result()
-	p.created(f)
-
+	reqCapture, readErr := p.startFlow(req, &f)
 	if readErr != nil {
 		f.StatusCode = http.StatusBadRequest
 		f.Error = readErr.Error()
@@ -52,17 +48,13 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 		return
 	}
 
-	req.Body = io.NopCloser(bytes.NewReader(requestBody))
-	req.RequestURI = ""
 	req.URL.Scheme = "https"
 	req.URL.Host = connectAuthority
+	prepareOutgoing(req)
 
-	resp, err := p.roundTripHTTP2(req)
+	resp, err := p.upstream().RoundTrip(req)
 	if err != nil {
-		f.StatusCode = http.StatusBadGateway
-		f.Error = err.Error()
-		finishFlow(&f, started)
-		p.updated(f)
+		p.failUpstream(&f, reqCapture, req, err)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
@@ -70,6 +62,7 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 
 	f.StatusCode = resp.StatusCode
 	f.RespHeaders = copyHeaders(resp.Header)
+	removeHopHeaders(resp.Header)
 	for name, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(name, value)
@@ -77,30 +70,11 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	responseCapture := newBodyCapture(p.maxBody)
-	_, writeErr := io.Copy(w, io.TeeReader(resp.Body, responseCapture))
+	respCapture := newBodyCapture(p.maxBody)
+	_, writeErr := io.Copy(w, io.TeeReader(resp.Body, respCapture))
 	if writeErr != nil {
-		_, _ = io.Copy(responseCapture, resp.Body)
+		_, _ = io.Copy(respCapture, resp.Body)
 		f.Error = writeErr.Error()
 	}
-	f.RespBody, f.RespSize, f.RespTruncated = responseCapture.result()
-	finishFlow(&f, started)
-	p.updated(f)
-}
-
-func (p *Proxy) roundTripHTTP2(req *http.Request) (*http.Response, error) {
-	p.mu.Lock()
-	if p.h2Transport == nil {
-		tlsConfig := &tls.Config{}
-		if p.UpstreamTLS != nil {
-			tlsConfig = p.UpstreamTLS.Clone()
-		}
-		p.h2Transport = &http2.Transport{
-			TLSClientConfig:    tlsConfig,
-			DisableCompression: true,
-		}
-	}
-	transport := p.h2Transport
-	p.mu.Unlock()
-	return transport.RoundTrip(req)
+	p.finishResponse(&f, reqCapture, req, resp, respCapture)
 }

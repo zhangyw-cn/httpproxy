@@ -72,7 +72,8 @@ export default function FlowDetail({ flow, loading }: Props) {
     [flow],
   )
   const resp = useMemo(
-    () => (flow ? prettyBody(decodeBase64(flow.resp_body), flow.resp_headers) : ''),
+    () =>
+      flow ? prettyBody(decodeBase64(flow.resp_body_decoded || flow.resp_body), flow.resp_headers) : '',
     [flow],
   )
 

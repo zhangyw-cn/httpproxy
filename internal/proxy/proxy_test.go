@@ -170,7 +170,7 @@ func TestProxyTransportLeavesUpstreamCompressionUntouched(t *testing.T) {
 
 	sink := &memSink{}
 	p := New("127.0.0.1:0", sink, 1024, nil)
-	if !p.transport.DisableCompression {
+	if !p.upstream().DisableCompression {
 		t.Fatal("upstream transport compression is enabled")
 	}
 	errCh := make(chan error, 1)
@@ -406,7 +406,7 @@ func TestProxyHTTP2(t *testing.T) {
 	}
 	sink := &memSink{}
 	p := New("127.0.0.1:0", sink, 1024, manager)
-	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true} // httptest uses a private test CA.
 	errCh := make(chan error, 1)
 	go func() { errCh <- p.ListenAndServe() }()
 	t.Cleanup(func() {
@@ -474,7 +474,7 @@ func TestHTTP2ResponseCaptureFinishesAfterClientWriteFailure(t *testing.T) {
 
 	sink := &memSink{}
 	p := New("", sink, 4, nil)
-	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true} // httptest uses a private test CA.
 	req := httptest.NewRequest(http.MethodGet, "https://"+upstream.Listener.Addr().String()+"/", nil)
 	p.handleHTTP2Request(failingResponseWriter{header: make(http.Header)}, req, upstream.Listener.Addr().String())
 
