@@ -1,19 +1,42 @@
 :root {
+  --bg: #0d1117;
+  --bg-subtle: #161b22;
+  --bg-hover: #21262d;
+  --border: #30363d;
+  --row-line: #21262d;
+  --text: #e6edf3;
+  --text-muted: #8b949e;
+  --accent: #58a6ff;
+  --accent-bg: #1f3a5f;
+  --selected-bg: #1f6feb;
+  --danger: #f85149;
+  --danger-bg: #490202;
+  --warn: #d29922;
+  --ok: #3fb950;
+  --notice-bg: #2d2305;
+  --notice-border: #9e6a03;
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --row-h: 22px;
+}
+
+[data-theme="light"] {
   --bg: #ffffff;
   --bg-subtle: #f6f8fa;
   --bg-hover: #eaeef2;
   --border: #d0d7de;
+  --row-line: #eaeef2;
   --text: #1f2328;
   --text-muted: #656d76;
   --accent: #0969da;
   --accent-bg: #ddf4ff;
+  --selected-bg: #0969da;
   --danger: #cf222e;
   --danger-bg: #ffebe9;
   --warn: #9a6700;
   --ok: #1a7f37;
-  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
-  --row-h: 22px;
+  --notice-bg: #fff8c5;
+  --notice-border: #eac54f;
 }
 
 * { box-sizing: border-box; }
@@ -95,13 +118,13 @@ code, pre { font-family: var(--mono); }
 .flow-table td {
   height: var(--row-h); padding: 0 8px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  border-right: 1px solid #eaeef2;
+  border-right: 1px solid var(--row-line);
 }
 .flow-table tbody tr:nth-child(even) { background: var(--bg-subtle); }
 .flow-table tbody tr { cursor: default; }
 .flow-table tbody tr:hover { background: var(--bg-hover); }
-.flow-table tbody tr.selected { background: var(--accent); color: #fff; }
-.flow-table tbody tr.selected td { color: #fff; }
+.flow-table tbody tr.selected { background: var(--selected-bg); color: #ffffff; }
+.flow-table tbody tr.selected td { color: #ffffff; }
 .flow-table tbody tr.row-err td { color: var(--danger); }
 .flow-table tbody tr.empty { background: transparent; cursor: default; }
 .flow-table tbody tr.empty td { color: var(--text-muted); padding: 16px; white-space: normal; }
@@ -133,7 +156,7 @@ tr.selected .name-host { color: rgba(255, 255, 255, 0.8); }
 .detail-body { flex: 1; overflow: auto; padding: 4px 0; }
 .pad { padding: 12px; }
 .muted { color: var(--text-muted); }
-.notice { padding: 4px 12px; color: var(--warn); background: #fff8c5; border-bottom: 1px solid #eac54f; }
+.notice { padding: 4px 12px; color: var(--warn); background: var(--notice-bg); border-bottom: 1px solid var(--notice-border); }
 
 .hdr-section h4 {
   margin: 0; padding: 3px 12px; font-size: 12px; font-weight: 600;
