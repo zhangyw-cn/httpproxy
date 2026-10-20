@@ -19,8 +19,8 @@ export function formatTime(ms: number): string {
 }
 
 function statusCell(f: FlowSummary): { text: string; cls: string } {
-  if (f.error) return { text: '(failed)', cls: 'st-err' }
-  if (!f.status_code) return { text: '(pending)', cls: 'st-pending' }
+  if (f.error) return { text: '(失败)', cls: 'st-err' }
+  if (!f.status_code) return { text: '(等待)', cls: 'st-pending' }
   const c = Math.floor(f.status_code / 100)
   return { text: String(f.status_code), cls: c >= 4 ? 'st-err' : c === 3 ? 'st-redirect' : 'st-ok' }
 }
@@ -44,12 +44,12 @@ export default function FlowTable({ flows, selectedId, onSelect }: Props) {
       <table className="flow-table">
         <thead>
           <tr>
-            <th className="col-name">Name</th>
-            <th className="col-status">Status</th>
-            <th className="col-method">Method</th>
-            <th className="col-version">Version</th>
-            <th className="col-size">Size</th>
-            <th className="col-time">Time</th>
+            <th className="col-name">名称</th>
+            <th className="col-status">状态</th>
+            <th className="col-method">方法</th>
+            <th className="col-version">版本</th>
+            <th className="col-size">大小</th>
+            <th className="col-time">耗时</th>
           </tr>
         </thead>
         <tbody>
@@ -75,7 +75,7 @@ export default function FlowTable({ flows, selectedId, onSelect }: Props) {
           })}
           {flows.length === 0 && (
             <tr className="empty">
-              <td colSpan={6}>No requests captured. Point a client at the proxy to start recording.</td>
+              <td colSpan={6}>尚未捕获请求。将客户端指向该代理后即可开始记录。</td>
             </tr>
           )}
         </tbody>

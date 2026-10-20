@@ -4,6 +4,12 @@ import { formatSize } from './FlowTable'
 
 type Tab = 'headers' | 'request' | 'response'
 
+const TAB_LABEL: Record<Tab, string> = {
+  headers: '标头',
+  request: '请求',
+  response: '响应',
+}
+
 interface Props {
   flow: Flow | null
   loading: boolean
@@ -53,12 +59,12 @@ function HeaderList({ title, headers }: { title: string; headers: Header[] | nul
 }
 
 function Body({ text, truncated, size }: { text: string; truncated: boolean; size: number }) {
-  if (!text) return <div className="muted pad">{size > 0 ? 'Body not captured.' : '(no body)'}</div>
+  if (!text) return <div className="muted pad">{size > 0 ? '未捕获正文。' : '(无正文)'}</div>
   return (
     <>
       {truncated && (
         <div className="notice">
-          Body truncated — stored preview is limited; original transfer size {formatSize(size)}.
+          正文已截断——仅保存有限预览；原始传输大小 {formatSize(size)}。
         </div>
       )}
       <pre className="body">{text}</pre>
@@ -84,33 +90,33 @@ export default function FlowDetail({ flow, loading }: Props) {
       <div className="tabs">
         {(['headers', 'request', 'response'] as Tab[]).map((t) => (
           <button key={t} className={`tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-            {t[0].toUpperCase() + t.slice(1)}
+            {TAB_LABEL[t]}
           </button>
         ))}
       </div>
       <div className="detail-body">
         {!flow ? (
-          <div className="muted pad">{loading ? 'Loading…' : 'Select a request to view details.'}</div>
+          <div className="muted pad">{loading ? '加载中…' : '选择一条请求以查看详情。'}</div>
         ) : tab === 'headers' ? (
           <>
             <section className="hdr-section">
-              <h4>General</h4>
+              <h4>常规</h4>
               <dl className="hdr-list">
-                <div className="hdr-row"><dt>Request URL:</dt><dd>{`${flow.scheme}://${flow.host}${flow.path}`}</dd></div>
-                <div className="hdr-row"><dt>Request Method:</dt><dd>{flow.method}</dd></div>
+                <div className="hdr-row"><dt>请求 URL：</dt><dd>{`${flow.scheme}://${flow.host}${flow.path}`}</dd></div>
+                <div className="hdr-row"><dt>请求方法：</dt><dd>{flow.method}</dd></div>
                 <div className="hdr-row">
-                  <dt>Status Code:</dt>
-                  <dd>{flow.status_code || (flow.error ? '(failed)' : '(pending)')}</dd>
+                  <dt>状态码：</dt>
+                  <dd>{flow.status_code || (flow.error ? '(失败)' : '(等待)')}</dd>
                 </div>
-                <div className="hdr-row"><dt>Protocol:</dt><dd>{flow.http_version}</dd></div>
-                <div className="hdr-row"><dt>Remote Address:</dt><dd>{flow.client_addr}</dd></div>
+                <div className="hdr-row"><dt>协议：</dt><dd>{flow.http_version}</dd></div>
+                <div className="hdr-row"><dt>远程地址：</dt><dd>{flow.client_addr}</dd></div>
                 {flow.error && (
-                  <div className="hdr-row err"><dt>Error:</dt><dd>{flow.error}</dd></div>
+                  <div className="hdr-row err"><dt>错误：</dt><dd>{flow.error}</dd></div>
                 )}
               </dl>
             </section>
-            <HeaderList title="Response Headers" headers={flow.resp_headers} />
-            <HeaderList title="Request Headers" headers={flow.req_headers} />
+            <HeaderList title="响应标头" headers={flow.resp_headers} />
+            <HeaderList title="请求标头" headers={flow.req_headers} />
           </>
         ) : tab === 'request' ? (
           <Body text={req} truncated={flow.req_truncated} size={flow.req_size} />

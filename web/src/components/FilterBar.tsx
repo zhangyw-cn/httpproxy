@@ -13,20 +13,20 @@ export default function FilterBar({ filters, onChange }: Props) {
     <div className="filterbar">
       <input
         className="input"
-        placeholder="Filter host"
+        placeholder="筛选主机"
         value={filters.host}
         onChange={(e) => set({ host: e.target.value })}
       />
       <input
         className="input"
-        placeholder="Filter path"
+        placeholder="筛选路径"
         value={filters.path}
         onChange={(e) => set({ path: e.target.value })}
       />
       <input
         className="input input-status"
-        placeholder="Status"
-        title="1 digit = class (2 → 2xx), 2 digits = prefix (40 → 40x), 3 digits = exact"
+        placeholder="状态码"
+        title="1 位表示类别（2 → 2xx），2 位表示前缀（40 → 40x），3 位表示精确匹配"
         value={filters.status}
         onChange={(e) => set({ status: e.target.value.replace(/\D/g, '').slice(0, 3) })}
       />
@@ -35,7 +35,7 @@ export default function FilterBar({ filters, onChange }: Props) {
           className={`chip${filters.status === '' ? ' active' : ''}`}
           onClick={() => set({ status: '' })}
         >
-          All
+          全部
         </button>
         {STATUS_PRESETS.map((s) => (
           <button
