@@ -1,11 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>httpproxy</title>
-    <script type="module" crossorigin src="/assets/index-B4NeDAK4.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CQb_wil6.css">
+    <script>
+      (function () {
+        var theme = 'dark'
+        try {
+          var stored = localStorage.getItem('httpproxy.theme')
+          if (stored === 'dark' || stored === 'light') theme = stored
+        } catch (e) {}
+        document.documentElement.setAttribute('data-theme', theme)
+      })()
+    </script>
+    <script type="module" crossorigin src="/assets/index-DBMEAWWy.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DjPCYBjE.css">
   </head>
   <body>
     <div id="root"></div>
