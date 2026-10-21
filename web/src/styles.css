@@ -147,15 +147,7 @@ code, pre { font-family: var(--mono); }
 .flow-table tbody tr.row-err td { color: var(--danger); }
 .flow-table tbody tr.empty { background: transparent; cursor: default; }
 .flow-table tbody tr.empty td { color: var(--text-muted); padding: 16px; white-space: normal; }
-.col-name { width: auto; }
-.col-status { width: 80px; }
-.col-method { width: 72px; }
-.col-version { width: 72px; }
-.col-size { width: 80px; text-align: right; }
-.col-time { width: 80px; text-align: right; }
 .name-path { font-family: var(--mono); font-size: 11px; }
-.name-host { margin-left: 8px; color: var(--text-muted); }
-tr.selected .name-host { color: rgba(255, 255, 255, 0.8); }
 .st-err { color: var(--danger); }
 .st-redirect { color: var(--warn); }
 .st-pending { color: var(--text-muted); }

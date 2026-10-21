@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type CSSProperties } from 'react'
+import { activeColumns, flowCell, tableMinWidth, type ColumnDef } from '../columns'
 import type { FlowSummary } from '../types'
 
 interface Props {
   flows: FlowSummary[]
   selectedId: string | null
   onSelect: (id: string) => void
+  visible: string[]
 }
 
 export function formatSize(n: number): string {
@@ -18,16 +20,17 @@ export function formatTime(ms: number): string {
   return `${(ms / 1000).toFixed(2)} s`
 }
 
-function statusCell(f: FlowSummary): { text: string; cls: string } {
-  if (f.error) return { text: '(失败)', cls: 'st-err' }
-  if (!f.status_code) return { text: '(等待)', cls: 'st-pending' }
-  const c = Math.floor(f.status_code / 100)
-  return { text: String(f.status_code), cls: c >= 4 ? 'st-err' : c === 3 ? 'st-redirect' : 'st-ok' }
+const formats = { size: formatSize, time: formatTime }
+
+function colStyle(column: ColumnDef): CSSProperties {
+  if (column.width === 'auto') return { minWidth: 160, textAlign: column.align }
+  return { width: column.width, textAlign: column.align }
 }
 
-export default function FlowTable({ flows, selectedId, onSelect }: Props) {
+export default function FlowTable({ flows, selectedId, onSelect, visible }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
+  const cols = activeColumns(visible)
 
   useEffect(() => {
     const el = bodyRef.current
@@ -41,41 +44,38 @@ export default function FlowTable({ flows, selectedId, onSelect }: Props) {
 
   return (
     <div className="table-wrap" ref={bodyRef} onScroll={onScroll}>
-      <table className="flow-table">
+      <table className="flow-table" style={{ minWidth: tableMinWidth(visible) }}>
         <thead>
           <tr>
-            <th className="col-name">名称</th>
-            <th className="col-status">状态</th>
-            <th className="col-method">方法</th>
-            <th className="col-version">版本</th>
-            <th className="col-size">大小</th>
-            <th className="col-time">耗时</th>
+            {cols.map((c) => (
+              <th key={c.id} style={colStyle(c)}>{c.label}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {flows.map((f) => {
-            const st = statusCell(f)
+            const status = flowCell('status', f, formats)
             return (
               <tr
                 key={f.id}
-                className={f.id === selectedId ? 'selected' : st.cls === 'st-err' ? 'row-err' : ''}
+                className={f.id === selectedId ? 'selected' : status.statusClass === 'st-err' ? 'row-err' : ''}
                 onClick={() => onSelect(f.id)}
               >
-                <td className="col-name" title={`${f.scheme}://${f.host}${f.path}`}>
-                  <span className="name-path">{f.path || '/'}</span>
-                  <span className="name-host">{f.host}</span>
-                </td>
-                <td className={`col-status ${st.cls}`}>{st.text}</td>
-                <td className="col-method">{f.method}</td>
-                <td className="col-version">{f.http_version}</td>
-                <td className="col-size">{formatSize(f.resp_size)}</td>
-                <td className="col-time">{f.status_code || f.error ? formatTime(f.duration_ms) : '…'}</td>
+                {cols.map((c) => {
+                  const cell = c.id === 'status' ? status : flowCell(c.id, f, formats)
+                  const statusCls = c.id === 'status' && cell.statusClass ? ` ${cell.statusClass}` : ''
+                  return (
+                    <td key={c.id} className={statusCls.trim()} style={colStyle(c)} title={cell.title}>
+                      {c.id === 'name' ? <span className="name-path">{cell.text}</span> : cell.text}
+                    </td>
+                  )
+                })}
               </tr>
             )
           })}
           {flows.length === 0 && (
             <tr className="empty">
-              <td colSpan={6}>尚未捕获请求。将客户端指向该代理后即可开始记录。</td>
+              <td colSpan={cols.length}>尚未捕获请求。将客户端指向该代理后即可开始记录。</td>
             </tr>
           )}
         </tbody>

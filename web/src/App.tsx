@@ -134,7 +134,7 @@ export default function App() {
       </div>
       <main className="workspace">
         <div className="pane pane-top">
-          <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} />
+          <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} visible={visible} />
         </div>
         <div className="pane pane-bottom">
           <FlowDetail flow={detail} loading={loading} />
