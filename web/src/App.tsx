@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows } from './api'
+import { loadVisible, normalizeVisible, saveVisible } from './columns'
+import ColumnPicker from './components/ColumnPicker'
 import FilterBar from './components/FilterBar'
 import FlowDetail from './components/FlowDetail'
 import FlowTable from './components/FlowTable'
@@ -29,6 +31,12 @@ export default function App() {
   const [flows, setFlows] = useState<FlowSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters>({ host: '', path: '', status: '' })
+  const [visible, setVisible] = useState<string[]>(() => loadVisible())
+  const onVisible = (ids: string[]) => {
+    const next = normalizeVisible(ids)
+    setVisible(next)
+    saveVisible(next)
+  }
   const [detail, setDetail] = useState<Flow | null>(null)
   const [loading, setLoading] = useState(false)
   const [maxFlows, setMaxFlows] = useState(1000)
@@ -120,7 +128,10 @@ export default function App() {
   return (
     <div className="app">
       <TopBar onClear={onClear} count={flows.length} />
-      <FilterBar filters={filters} onChange={setFilters} />
+      <div className="filterbar">
+        <FilterBar filters={filters} onChange={setFilters} />
+        <ColumnPicker visible={visible} onChange={onVisible} />
+      </div>
       <main className="workspace">
         <div className="pane pane-top">
           <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} />

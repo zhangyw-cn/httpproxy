@@ -10,7 +10,7 @@ const STATUS_PRESETS = ['2', '3', '4', '5']
 export default function FilterBar({ filters, onChange }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch })
   return (
-    <div className="filterbar">
+    <>
       <input
         className="input"
         placeholder="筛选主机"
@@ -47,6 +47,6 @@ export default function FilterBar({ filters, onChange }: Props) {
           </button>
         ))}
       </div>
-    </div>
+    </>
   )
 }
