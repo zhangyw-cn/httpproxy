@@ -46,6 +46,23 @@ func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
 	}
 }
 
+// SetMaxBody sets the body capture cap for flows that start after this call.
+// A negative n is stored as 0. A flow already started keeps the limit from startFlow.
+func (p *Proxy) SetMaxBody(n int64) {
+	if n < 0 {
+		n = 0
+	}
+	p.mu.Lock()
+	p.maxBody = n
+	p.mu.Unlock()
+}
+
+func (p *Proxy) maxBodyLimit() int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxBody
+}
+
 // upstream returns the shared client transport, built lazily so tests can set
 // UpstreamTLS after New. It negotiates h2 or HTTP/1.1 per upstream server,
 // independently of the protocol the client spoke to the proxy.

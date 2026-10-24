@@ -165,7 +165,7 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 		StartedAt:   started,
 		ClientAddr:  conn.RemoteAddr().String(),
 	}
-	reqCapture := p.startFlow(req, &f)
+	reqCapture, limit := p.startFlow(req, &f)
 
 	if defaultHost != "" {
 		req.URL.Scheme = scheme
@@ -177,7 +177,7 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 		}
 	}
 	if p.isLoopbackTarget(req.URL) {
-		p.failUpstream(&f, reqCapture, req, errSelfProxy)
+		p.failUpstream(&f, reqCapture, req, errSelfProxy, limit)
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
 		return false
 	}
@@ -185,7 +185,7 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 
 	resp, err := p.roundTrip(req, upstreamSNI)
 	if err != nil {
-		p.failUpstream(&f, reqCapture, req, err)
+		p.failUpstream(&f, reqCapture, req, err, limit)
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
 		return false
 	}
@@ -195,10 +195,10 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	f.RespHeaders = copyHeaders(resp.Header)
 
 	if websocket && resp.StatusCode == http.StatusSwitchingProtocols {
-		return p.tunnelWebSocket(conn, req, resp, &f, reqCapture, started)
+		return p.tunnelWebSocket(conn, req, resp, &f, reqCapture, started, limit)
 	}
 
-	respCapture := newBodyCapture(p.maxBody)
+	respCapture := newBodyCapture(limit)
 	resp.Body = struct {
 		io.Reader
 		io.Closer
@@ -213,11 +213,11 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 		_, _ = io.Copy(io.Discard, resp.Body)
 		f.Error = writeErr.Error()
 	}
-	p.finishResponse(&f, reqCapture, req, resp, respCapture)
+	p.finishResponse(&f, reqCapture, req, resp, respCapture, limit)
 	return writeErr == nil && !closeAfter
 }
 
-func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Response, f *flow.Flow, reqCapture *bodyCapture, started time.Time) bool {
+func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Response, f *flow.Flow, reqCapture *bodyCapture, started time.Time, limit int64) bool {
 	// Write the 101 response headers to the client, then bidirectional copy.
 	// For 101, Transport exposes Body as a ReadWriteCloser (net/http docs).
 	removeHopHeadersPreserveUpgrade(resp.Header)
@@ -229,7 +229,7 @@ func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Res
 	if !ok {
 		_ = resp.Body.Close()
 		f.Error = "websocket upgrade: upstream body is not duplex"
-		p.setRequestCapture(f, reqCapture, req)
+		p.setRequestCapture(f, reqCapture, req, limit)
 		finishFlow(f, started)
 		p.updated(*f)
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
@@ -240,12 +240,12 @@ func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Res
 	if err := resp.Write(conn); err != nil {
 		_ = upstreamConn.Close()
 		f.Error = err.Error()
-		p.setRequestCapture(f, reqCapture, req)
+		p.setRequestCapture(f, reqCapture, req, limit)
 		finishFlow(f, started)
 		p.updated(*f)
 		return false
 	}
-	p.setRequestCapture(f, reqCapture, req)
+	p.setRequestCapture(f, reqCapture, req, limit)
 	finishFlow(f, started)
 	p.updated(*f)
 
@@ -299,34 +299,36 @@ func normalizeForHTTP1Client(resp *http.Response, req *http.Request, clientClose
 }
 
 // startFlow attaches a streaming body tee and emits the created Flow (headers
-// only until bytes pass through the tee).
-func (p *Proxy) startFlow(req *http.Request, f *flow.Flow) *bodyCapture {
+// only until bytes pass through the tee). The returned limit is this flow's
+// body cap; a later SetMaxBody does not change it.
+func (p *Proxy) startFlow(req *http.Request, f *flow.Flow) (*bodyCapture, int64) {
+	limit := p.maxBodyLimit()
 	f.ReqHeaders = copyHeaders(req.Header)
-	reqCapture := streamRequestBody(req, p.maxBody)
+	reqCapture := streamRequestBody(req, limit)
 	p.created(*f)
-	return reqCapture
+	return reqCapture, limit
 }
 
-func (p *Proxy) setRequestCapture(f *flow.Flow, reqCapture *bodyCapture, req *http.Request) {
+func (p *Proxy) setRequestCapture(f *flow.Flow, reqCapture *bodyCapture, req *http.Request, limit int64) {
 	f.ReqBody, f.ReqSize, f.ReqTruncated = reqCapture.result()
 	if req.ContentLength > f.ReqSize {
 		f.ReqSize = req.ContentLength
-		f.ReqTruncated = f.ReqSize > p.maxBody
+		f.ReqTruncated = f.ReqSize > limit
 	}
 }
 
-func (p *Proxy) failUpstream(f *flow.Flow, reqCapture *bodyCapture, req *http.Request, err error) {
-	p.setRequestCapture(f, reqCapture, req)
+func (p *Proxy) failUpstream(f *flow.Flow, reqCapture *bodyCapture, req *http.Request, err error, limit int64) {
+	p.setRequestCapture(f, reqCapture, req, limit)
 	f.StatusCode = http.StatusBadGateway
 	f.Error = err.Error()
 	finishFlow(f, f.StartedAt)
 	p.updated(*f)
 }
 
-func (p *Proxy) finishResponse(f *flow.Flow, reqCapture *bodyCapture, req *http.Request, resp *http.Response, respCapture *bodyCapture) {
-	p.setRequestCapture(f, reqCapture, req)
+func (p *Proxy) finishResponse(f *flow.Flow, reqCapture *bodyCapture, req *http.Request, resp *http.Response, respCapture *bodyCapture, limit int64) {
+	p.setRequestCapture(f, reqCapture, req, limit)
 	f.RespBody, f.RespSize, f.RespTruncated = respCapture.result()
-	f.RespBodyDecoded = decodeForDisplay(f.RespBody, resp.Header, p.maxBody)
+	f.RespBodyDecoded = decodeForDisplay(f.RespBody, resp.Header, limit)
 	finishFlow(f, f.StartedAt)
 	p.updated(*f)
 }
