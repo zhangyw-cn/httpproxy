@@ -87,3 +87,13 @@ func TestParseJSON(t *testing.T) {
 		t.Fatalf("present UI error wins over a missing proxy, got %v", err)
 	}
 }
+
+func TestParseJSONRejectsTrailingBytes(t *testing.T) {
+	valid := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark"}`
+	for _, suffix := range []string{"]", "}{", valid} {
+		_, err := ParseJSON([]byte(valid + suffix))
+		if !errors.Is(err, ErrJSON) {
+			t.Fatalf("suffix %q: got %v", suffix, err)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -138,7 +139,8 @@ func ParseJSON(data []byte) (Values, error) {
 	if err := dec.Decode(&raw); err != nil {
 		return Values{}, ErrJSON
 	}
-	if dec.More() {
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
 		return Values{}, ErrJSON
 	}
 
