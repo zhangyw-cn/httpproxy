@@ -58,6 +58,24 @@ func (s *Store) Max() int {
 	return s.max
 }
 
+// SetMax resizes the ring and returns IDs evicted when shrinking (oldest first).
+func (s *Store) SetMax(max int) (evicted []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if max < 1 {
+		max = 1
+	}
+	s.max = max
+	for len(s.order) > s.max {
+		oldest := s.order[0]
+		delete(s.byID, oldest)
+		evicted = append(evicted, oldest)
+		s.order = s.order[1:]
+	}
+	return evicted
+}
+
 func (s *Store) Update(f flow.Flow) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

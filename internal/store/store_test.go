@@ -74,6 +74,43 @@ func TestUpdateReflectedInGetAndList(t *testing.T) {
 	}
 }
 
+func TestSetMaxEvictsOldest(t *testing.T) {
+	s := store.New(3)
+	s.Add(flow.Flow{ID: "1"})
+	s.Add(flow.Flow{ID: "2"})
+	s.Add(flow.Flow{ID: "3"})
+
+	evicted := s.SetMax(1)
+	if len(evicted) != 2 || evicted[0] != "1" || evicted[1] != "2" {
+		t.Fatalf("SetMax(1) evicted = %v, want [1 2]", evicted)
+	}
+	if _, ok := s.Get("1"); ok {
+		t.Fatal("id 1 should be evicted")
+	}
+	if _, ok := s.Get("2"); ok {
+		t.Fatal("id 2 should be evicted")
+	}
+	if _, ok := s.Get("3"); !ok {
+		t.Fatal("id 3 should remain")
+	}
+	if list := s.List(store.Filter{}); len(list) != 1 {
+		t.Fatalf("only flow 3 should remain, got %+v", list)
+	}
+
+	evicted = s.SetMax(4)
+	if len(evicted) != 0 {
+		t.Fatalf("SetMax(4) evicted = %v, want empty", evicted)
+	}
+	if got := s.Max(); got != 4 {
+		t.Fatalf("Max() = %d, want 4", got)
+	}
+
+	s.SetMax(0)
+	if got := s.Max(); got != 1 {
+		t.Fatalf("SetMax(0) Max() = %d, want 1", got)
+	}
+}
+
 func TestAddSameIDMovesToNewest(t *testing.T) {
 	s := store.New(10)
 	s.Add(flow.Flow{ID: "1", Host: "first"})
