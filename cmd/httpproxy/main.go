@@ -86,7 +86,7 @@ func run(args []string) int {
 	apiHandler := apiServer.Handler()
 	root.Handle("/api/", apiHandler)
 	root.Handle("/ws/flows", apiHandler)
-	root.Handle("/", ui.Handler())
+	root.Handle("/", ui.Handler(runtime.Theme))
 
 	handler := api.LocalOnly(root, listenHost(runtime.UI), runtime.UI)
 
