@@ -30,7 +30,7 @@ func TestListGetClearAndCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := api.New(st, ca)
+	srv := api.New(st, ca, nil, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -99,7 +99,7 @@ func TestWebSocketReceivesSinkEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := api.New(st, ca)
+	srv := api.New(st, ca, nil, nil)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

@@ -8,27 +8,32 @@ import (
 	"github.com/coder/websocket"
 
 	"httpproxy/internal/cert"
+	"httpproxy/internal/config"
 	"httpproxy/internal/flow"
 	"httpproxy/internal/proxy"
 	"httpproxy/internal/store"
 )
 
 type Server struct {
-	store *store.Store
-	ca    *cert.Manager
-	hub   *Hub
-	sink  *StoreSink
-	mux   *http.ServeMux
+	store   *store.Store
+	ca      *cert.Manager
+	hub     *Hub
+	sink    *StoreSink
+	mux     *http.ServeMux
+	session *config.Session
+	proxy   *proxy.Proxy
 }
 
-func New(st *store.Store, ca *cert.Manager) *Server {
+func New(st *store.Store, ca *cert.Manager, session *config.Session, px *proxy.Proxy) *Server {
 	hub := NewHub()
 	s := &Server{
-		store: st,
-		ca:    ca,
-		hub:   hub,
-		sink:  &StoreSink{Store: st, Hub: hub},
-		mux:   http.NewServeMux(),
+		store:   st,
+		ca:      ca,
+		hub:     hub,
+		sink:    &StoreSink{Store: st, Hub: hub},
+		mux:     http.NewServeMux(),
+		session: session,
+		proxy:   px,
 	}
 	s.routes()
 	return s
@@ -50,6 +55,7 @@ func (s *Server) ClientCount() int {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.health)
 	s.mux.HandleFunc("GET /api/config", s.config)
+	s.mux.HandleFunc("PUT /api/config", s.putConfig)
 	s.mux.HandleFunc("GET /api/flows", s.listFlows)
 	s.mux.HandleFunc("GET /api/flows/{id}", s.getFlow)
 	s.mux.HandleFunc("DELETE /api/flows", s.clearFlows)
@@ -61,12 +67,6 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		OK bool `json:"ok"`
 	}{OK: true})
-}
-
-func (s *Server) config(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, struct {
-		MaxFlows int `json:"max_flows"`
-	}{MaxFlows: s.store.Max()})
 }
 
 func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
