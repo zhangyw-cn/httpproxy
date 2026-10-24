@@ -41,11 +41,36 @@ func TestHandlerServesEmbeddedIndex(t *testing.T) {
 	}
 }
 
+func TestHandlerReadsThemeOnEachIndexRequest(t *testing.T) {
+	n := 0
+	handler := ui.Handler(func() string {
+		n++
+		if n == 1 {
+			return "dark"
+		}
+		return "light"
+	})
+
+	first := serveHandler(t, handler, "/")
+	second := serveHandler(t, handler, "/")
+	if !strings.Contains(first, `data-theme="dark"`) {
+		t.Fatalf("first index = %s, want data-theme=dark", first)
+	}
+	if !strings.Contains(second, `data-theme="light"`) {
+		t.Fatalf("second index = %s, want data-theme=light", second)
+	}
+}
+
 func serve(t *testing.T, theme, path string) string {
+	t.Helper()
+	return serveHandler(t, ui.Handler(func() string { return theme }), path)
+}
+
+func serveHandler(t *testing.T, handler http.Handler, path string) string {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, path, nil)
 	response := httptest.NewRecorder()
-	ui.Handler(theme).ServeHTTP(response, request)
+	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusOK)
 	}

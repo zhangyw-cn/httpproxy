@@ -10,10 +10,7 @@ import (
 //go:embed dist/*
 var dist embed.FS
 
-func Handler(theme string) http.Handler {
-	if theme != "light" {
-		theme = "dark"
-	}
+func Handler(theme func() string) http.Handler {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {
 		panic(err)
@@ -22,11 +19,21 @@ func Handler(theme string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		trimmed := strings.TrimPrefix(r.URL.Path, "/")
 		if r.URL.Path == "/" || !strings.Contains(trimmed, ".") {
-			serveIndex(w, sub, theme)
+			serveIndex(w, sub, themeAtRequest(theme))
 			return
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+func themeAtRequest(theme func() string) string {
+	if theme == nil {
+		return "dark"
+	}
+	if theme() != "light" {
+		return "dark"
+	}
+	return "light"
 }
 
 func serveIndex(w http.ResponseWriter, sub fs.FS, theme string) {

@@ -86,7 +86,10 @@ func run(args []string) int {
 	apiHandler := apiServer.Handler()
 	root.Handle("/api/", apiHandler)
 	root.Handle("/ws/flows", apiHandler)
-	root.Handle("/", ui.Handler(runtime.Theme))
+	root.Handle("/", ui.Handler(func() string {
+		_, rt := session.Snapshot()
+		return rt.Theme
+	}))
 
 	handler := api.LocalOnly(root, listenHost(runtime.UI), runtime.UI)
 
