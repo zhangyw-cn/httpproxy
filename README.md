@@ -41,11 +41,26 @@ Other Make targets:
 
 ```sh
 ./bin/httpproxy
+./bin/httpproxy /path/to/workdir
 ```
 
 By default, the proxy listens on `localhost:8080` and the web UI is available
-at <http://localhost:8081>. At first startup, the CA certificate and private
-key are generated under `~/.httpproxy`.
+at <http://localhost:8081>. The CA and `config.yaml` are created under
+`<workdir>/.httpproxy/` on first launch. The workdir is the optional directory
+argument, or the current directory when it is omitted. `httpproxy` does not
+read `~/.httpproxy`.
+
+```text
+<workdir>/.httpproxy/      # mode 0700
+  .gitignore               # contains *
+  config.yaml              # mode 0644
+  ca.crt
+  ca.key                   # mode 0600
+```
+
+`.gitignore` contains `*` and `ca.key` is mode `0600`. A new `config.yaml`
+uses `proxy: 127.0.0.1:8080`, `ui: 127.0.0.1:8081`, `max_flows: 1000`,
+`max_body: 1048576`, and `theme: dark`.
 
 Point the HTTP and HTTPS proxy settings of your browser, application, or
 operating system to `localhost:8080`, then open the UI. Applications that do
@@ -60,7 +75,7 @@ curl -x http://127.0.0.1:8080 http://example.com
 ## Install the CA certificate
 
 Download the CA from the **CA certificate** link in the UI, or use
-`~/.httpproxy/ca.crt` directly. Import it as a trusted root certificate using
+`<workdir>/.httpproxy/ca.crt` directly. Import it as a trusted root certificate using
 your operating system or browser certificate manager:
 
 - **Linux:** add it to the distribution's local CA directory and refresh the
@@ -78,13 +93,21 @@ the trust store when it is no longer needed.
 
 ## Command-line flags
 
-| Flag | Default | Description |
-| --- | --- | --- |
-| `-proxy` | `127.0.0.1:8080` | Proxy listen address (loopback by default) |
-| `-ui` | `127.0.0.1:8081` | Web UI listen address (loopback by default; Host allowlist applied) |
-| `-max-flows` | `1000` | Maximum number of flows retained in memory |
-| `-max-body` | `1048576` | Maximum stored bytes per request/response body (and decoded UI copy) |
-| `-ca-dir` | `~/.httpproxy` | Directory containing the generated CA certificate and key |
+The positional directory and these four flags are this-process overrides.
+Settings edits are written to `.httpproxy/config.yaml`. `-proxy` and `-ui`
+apply only after a restart when changed from the settings page.
+
+| Argument | Description |
+| --- | --- |
+| `DIR` | Optional positional workdir. Omit it to use the current directory. |
+| `-proxy` | This-process override of the proxy listen address. |
+| `-ui` | This-process override of the web UI listen address. |
+| `-max-flows` | This-process override of the retained flow count. |
+| `-max-body` | This-process override of the maximum stored bytes per request/response body (and decoded UI copy). |
+
+The gear at the bottom of the left bar opens settings for theme, proxy
+address, UI address, retained flow count, and body limit. The top bar still
+has CA download and clear.
 
 Example (LAN access — only if you accept that decrypted traffic is exposed):
 
