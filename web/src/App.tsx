@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows } from './api'
 import { loadVisible, normalizeVisible, saveVisible } from './columns'
+import ActivityBar from './components/ActivityBar'
 import ColumnPicker from './components/ColumnPicker'
 import FilterBar from './components/FilterBar'
 import FlowDetail from './components/FlowDetail'
 import FlowTable from './components/FlowTable'
+import SettingsPane from './components/SettingsPane'
 import TopBar from './components/TopBar'
-import type { Filters, Flow, FlowSummary } from './types'
+import type { ConfigSnapshot, Filters, Flow, FlowSummary } from './types'
 
 function matchStatus(code: number, filter: string): boolean {
   if (!filter) return true
@@ -39,7 +41,10 @@ export default function App() {
   }
   const [detail, setDetail] = useState<Flow | null>(null)
   const [loading, setLoading] = useState(false)
-  const [maxFlows, setMaxFlows] = useState(1000)
+  const [snapshot, setSnapshot] = useState<ConfigSnapshot | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const [view, setView] = useState<'capture' | 'settings'>('capture')
+  const maxFlows = snapshot?.runtime.max_flows ?? 1000
   const filtersRef = useRef(filters)
   const maxFlowsRef = useRef(maxFlows)
   filtersRef.current = filters
@@ -47,11 +52,19 @@ export default function App() {
 
   useEffect(() => {
     getConfig()
-      .then((c) => {
-        if (c.max_flows > 0) setMaxFlows(c.max_flows)
+      .then((next) => {
+        setSnapshot(next)
+        document.documentElement.dataset.theme = next.runtime.theme
       })
-      .catch(() => { /* keep default */ })
+      .catch(() => {
+        setLoadError(true)
+      })
   }, [])
+
+  const onSaved = (next: ConfigSnapshot) => {
+    setSnapshot(next)
+    document.documentElement.dataset.theme = next.runtime.theme
+  }
 
   const refetch = useCallback(async () => {
     try {
@@ -127,19 +140,31 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar onClear={onClear} count={flows.length} />
-      <div className="filterbar">
-        <FilterBar filters={filters} onChange={setFilters} />
-        <ColumnPicker visible={visible} onChange={onVisible} />
+      <TopBar onClear={onClear} count={flows.length} proxy={snapshot?.runtime.proxy ?? ''} />
+      <div className="shell">
+        <ActivityBar
+          open={view === 'settings'}
+          onToggle={() => setView((current) => (current === 'settings' ? 'capture' : 'settings'))}
+        />
+        {view === 'settings' ? (
+          <SettingsPane snapshot={snapshot} loadError={loadError} onSaved={onSaved} />
+        ) : (
+          <div className="capture">
+            <div className="filterbar">
+              <FilterBar filters={filters} onChange={setFilters} />
+              <ColumnPicker visible={visible} onChange={onVisible} />
+            </div>
+            <main className="workspace">
+              <div className="pane pane-top">
+                <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} visible={visible} />
+              </div>
+              <div className="pane pane-bottom">
+                <FlowDetail flow={detail} loading={loading} />
+              </div>
+            </main>
+          </div>
+        )}
       </div>
-      <main className="workspace">
-        <div className="pane pane-top">
-          <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} visible={visible} />
-        </div>
-        <div className="pane pane-bottom">
-          <FlowDetail flow={detail} loading={loading} />
-        </div>
-      </main>
     </div>
   )
 }

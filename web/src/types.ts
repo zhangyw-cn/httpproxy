@@ -44,6 +44,15 @@ export interface Filters {
   status: string
 }
 
-export interface AppConfig {
+export interface ConfigValues {
+  proxy: string
+  ui: string
   max_flows: number
+  max_body: number
+  theme: 'dark' | 'light'
+}
+
+export interface ConfigSnapshot {
+  file: ConfigValues
+  runtime: ConfigValues
 }

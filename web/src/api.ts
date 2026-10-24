@@ -1,8 +1,27 @@
-import type { AppConfig, Filters, Flow, FlowEvent, FlowSummary } from './types'
+import type { ConfigSnapshot, ConfigValues, Filters, Flow, FlowEvent, FlowSummary } from './types'
 
-export async function getConfig(): Promise<AppConfig> {
+export async function getConfig(): Promise<ConfigSnapshot> {
   const r = await fetch('/api/config')
   if (!r.ok) throw new Error(`config: ${r.status}`)
+  return r.json()
+}
+
+export async function putConfig(file: ConfigValues): Promise<ConfigSnapshot> {
+  const r = await fetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(file),
+  })
+  if (!r.ok) {
+    let message = '无法写入配置'
+    try {
+      const body: { error?: unknown } = await r.json()
+      if (typeof body.error === 'string') message = body.error
+    } catch {
+      /* body has no error string */
+    }
+    throw new Error(message)
+  }
   return r.json()
 }
 
