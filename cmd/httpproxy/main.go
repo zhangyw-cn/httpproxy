@@ -1,45 +1,86 @@
 package main
 
 import (
-	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"httpproxy/internal/api"
 	"httpproxy/internal/cert"
+	"httpproxy/internal/config"
 	"httpproxy/internal/proxy"
 	"httpproxy/internal/store"
 	"httpproxy/internal/ui"
 )
 
 func main() {
-	proxyAddr := flag.String("proxy", "127.0.0.1:8080", "proxy listen address")
-	uiAddr := flag.String("ui", "127.0.0.1:8081", "web UI listen address (default loopback)")
-	maxFlows := flag.Int("max-flows", 1000, "max retained flows")
-	maxBody := flag.Int64("max-body", 1<<20, "max stored body bytes per side")
-	caDir := flag.String("ca-dir", "", "CA directory (default ~/.httpproxy)")
-	flag.Parse()
+	os.Exit(run(os.Args[1:]))
+}
 
-	dir := *caDir
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatal(err)
-		}
-		dir = filepath.Join(home, ".httpproxy")
-	}
-
-	ca, err := cert.LoadOrCreate(dir)
+func run(args []string) int {
+	opt, err := parseArgs(args)
 	if err != nil {
-		log.Fatalf("ca: %v", err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 2
 	}
-	st := store.New(*maxFlows)
-	apiServer := api.New(st, ca)
-	proxyServer := proxy.New(*proxyAddr, apiServer.Sink(), *maxBody, ca)
+
+	candidate := config.Defaults()
+	if opt.proxySet {
+		candidate.Proxy = opt.proxy
+	}
+	if opt.uiSet {
+		candidate.UI = opt.ui
+	}
+	if opt.maxFlowsSet {
+		candidate.MaxFlows = opt.maxFlows
+	}
+	if opt.maxBodySet {
+		candidate.MaxBody = opt.maxBody
+	}
+	if _, err := config.ParseYAML(config.MarshalYAML(candidate)); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 2
+	}
+
+	workdir, code, err := resolveWorkdir(opt.workdir)
+	if err != nil {
+		if code == 1 {
+			fmt.Fprintf(os.Stderr, "getcwd: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "workdir: %v\n", err)
+		}
+		return code
+	}
+
+	dir, file, err := config.Open(workdir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	ca, err := cert.LoadOrCreate(dir.Path())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ca: %v\n", err)
+		return 1
+	}
+	if err := config.ChmodPrivate(dir.Path()); err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+
+	session := config.NewSession(dir, file, config.Overrides{
+		Proxy:    opt.proxySet,
+		UI:       opt.uiSet,
+		MaxFlows: opt.maxFlowsSet,
+		MaxBody:  opt.maxBodySet,
+	}, opt.proxy, opt.ui, opt.maxFlows, opt.maxBody)
+	_, runtime := session.Snapshot()
+	st := store.New(runtime.MaxFlows)
+	apiServer := api.New(st, ca, session, nil)
+	proxyServer := proxy.New(runtime.Proxy, apiServer.Sink(), runtime.MaxBody, ca)
+	apiServer.SetProxy(proxyServer)
 
 	root := http.NewServeMux()
 	apiHandler := apiServer.Handler()
@@ -47,16 +88,22 @@ func main() {
 	root.Handle("/ws/flows", apiHandler)
 	root.Handle("/", ui.Handler())
 
-	uiHost := listenHost(*uiAddr)
-	handler := api.LocalOnly(root, uiHost, *uiAddr)
+	handler := api.LocalOnly(root, listenHost(runtime.UI), runtime.UI)
 
+	errc := make(chan error, 2)
 	go func() {
-		log.Printf("UI on %s (loopback-restricted Host check)", *uiAddr)
-		log.Fatal(http.ListenAndServe(*uiAddr, handler))
+		log.Printf("UI on %s (loopback-restricted Host check)", runtime.UI)
+		errc <- http.ListenAndServe(runtime.UI, handler)
 	}()
-
-	log.Printf("proxy on %s (CA %s)", *proxyAddr, dir)
-	log.Fatal(proxyServer.ListenAndServe())
+	log.Printf("proxy on %s (CA %s)", runtime.Proxy, dir.Path())
+	go func() {
+		errc <- proxyServer.ListenAndServe()
+	}()
+	if err := <-errc; err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func listenHost(addr string) string {
