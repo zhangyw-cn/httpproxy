@@ -44,26 +44,27 @@ Other Make targets:
 ./bin/httpproxy /path/to/workdir
 ```
 
-By default, the proxy listens on `localhost:8080` and the web UI is available
-at <http://localhost:8081>. The CA and `config.yaml` are created under
+By default, the proxy listens on `127.0.0.1:8080` and the web UI is available
+at <http://127.0.0.1:8081>. The CA and `config.yaml` are created under
 `<workdir>/.httpproxy/` on first launch. The workdir is the optional directory
 argument, or the current directory when it is omitted. `httpproxy` does not
 read `~/.httpproxy`.
 
 ```text
 <workdir>/.httpproxy/      # mode 0700
-  .gitignore               # contains *
+  .gitignore               # "*" written only when this file is absent
   config.yaml              # mode 0644
   ca.crt
   ca.key                   # mode 0600
 ```
 
-`.gitignore` contains `*` and `ca.key` is mode `0600`. A new `config.yaml`
+`.gitignore` is written as `*` only when that file is absent. An existing
+`.gitignore` is left unchanged. `ca.key` is mode `0600`. A new `config.yaml`
 uses `proxy: 127.0.0.1:8080`, `ui: 127.0.0.1:8081`, `max_flows: 1000`,
 `max_body: 1048576`, and `theme: dark`.
 
 Point the HTTP and HTTPS proxy settings of your browser, application, or
-operating system to `localhost:8080`, then open the UI. Applications that do
+operating system to `127.0.0.1:8080`, then open the UI. Applications that do
 not use the configured proxy will not be captured.
 
 For a command-line smoke test:
@@ -74,7 +75,7 @@ curl -x http://127.0.0.1:8080 http://example.com
 
 ## Install the CA certificate
 
-Download the CA from the **CA certificate** link in the UI, or use
+Download the CA from the **下载 CA** button in the top bar, or use
 `<workdir>/.httpproxy/ca.crt` directly. Import it as a trusted root certificate using
 your operating system or browser certificate manager:
 
@@ -93,9 +94,12 @@ the trust store when it is no longer needed.
 
 ## Command-line flags
 
-The positional directory and these four flags are this-process overrides.
-Settings edits are written to `.httpproxy/config.yaml`. `-proxy` and `-ui`
-apply only after a restart when changed from the settings page.
+`DIR` selects the workdir. It is not a config override. The four flags below
+override the file for this process only. Settings edits are written to
+`.httpproxy/config.yaml` and do not copy those flags back into the file.
+`-proxy` and `-ui` apply only after a restart when changed from the settings
+page. Without `-max-flows` or `-max-body`, a saved limit takes effect in this
+process. Theme takes effect immediately.
 
 | Argument | Description |
 | --- | --- |

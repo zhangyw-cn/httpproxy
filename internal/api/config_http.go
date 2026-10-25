@@ -40,19 +40,20 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, err)
 		return
 	}
-	applied, err := s.session.Save(next)
+	applied, err := s.session.SaveAndApply(next, func(applied config.Applied) {
+		if applied.SetMaxFlows {
+			ids := s.store.SetMax(applied.MaxFlows)
+			for _, id := range ids {
+				s.hub.Broadcast(Event{Type: "flow.evicted", FlowID: id})
+			}
+		}
+		if applied.SetMaxBody && s.proxy != nil {
+			s.proxy.SetMaxBody(applied.MaxBody)
+		}
+	})
 	if err != nil {
 		writeConfigError(w, err)
 		return
-	}
-	if applied.SetMaxFlows {
-		ids := s.store.SetMax(applied.MaxFlows)
-		for _, id := range ids {
-			s.hub.Broadcast(Event{Type: "flow.evicted", FlowID: id})
-		}
-	}
-	if applied.SetMaxBody && s.proxy != nil {
-		s.proxy.SetMaxBody(applied.MaxBody)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		File    config.Values `json:"file"`

@@ -59,6 +59,13 @@ func (s *Session) Snapshot() (file Values, runtime Values) {
 }
 
 func (s *Session) Save(next Values) (Applied, error) {
+	return s.SaveAndApply(next, nil)
+}
+
+// SaveAndApply writes next, updates memory, then runs apply while still
+// holding the session lock. A second save cannot observe the new runtime
+// until apply has finished updating the ring and the body limit.
+func (s *Session) SaveAndApply(next Values, apply func(Applied)) (Applied, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -80,5 +87,8 @@ func (s *Session) Save(next Values) (Applied, error) {
 	}
 	s.runtime.Theme = next.Theme
 	applied.Runtime = s.runtime
+	if apply != nil {
+		apply(applied)
+	}
 	return applied, nil
 }

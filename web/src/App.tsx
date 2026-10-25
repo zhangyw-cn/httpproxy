@@ -61,19 +61,28 @@ export default function App() {
       })
   }, [])
 
-  const onSaved = (next: ConfigSnapshot) => {
-    setSnapshot(next)
-    document.documentElement.dataset.theme = next.runtime.theme
-  }
-
   const refetch = useCallback(async () => {
     try {
       const list = await listFlows(filtersRef.current)
-      setFlows(trimOldest([...list].reverse(), maxFlowsRef.current))
+      const next = trimOldest([...list].reverse(), maxFlowsRef.current)
+      setFlows(next)
+      return next
     } catch {
       /* keep current state; WS reconnect will retry */
+      return null
     }
   }, [])
+
+  const onSaved = (next: ConfigSnapshot) => {
+    setSnapshot(next)
+    document.documentElement.dataset.theme = next.runtime.theme
+    if (next.runtime.max_flows === maxFlowsRef.current) return
+    maxFlowsRef.current = next.runtime.max_flows
+    void refetch().then((list) => {
+      if (!list) return
+      setSelectedId((cur) => (cur && list.some((flow) => flow.id === cur) ? cur : null))
+    })
+  }
 
   useEffect(() => {
     const t = window.setTimeout(refetch, 150)
@@ -146,12 +155,13 @@ export default function App() {
           open={view === 'settings'}
           onToggle={() => setView((current) => (current === 'settings' ? 'capture' : 'settings'))}
         />
-        {view === 'settings' ? (
-          <SettingsPane snapshot={snapshot} loadError={loadError} onSaved={onSaved} />
-        ) : (
+        <SettingsPane snapshot={snapshot} loadError={loadError} open={view === 'settings'} onSaved={onSaved} />
+        {view === 'capture' ? (
           <div className="capture">
             <div className="filterbar">
-              <FilterBar filters={filters} onChange={setFilters} />
+              <div className="filterbar-main">
+                <FilterBar filters={filters} onChange={setFilters} />
+              </div>
               <ColumnPicker visible={visible} onChange={onVisible} />
             </div>
             <main className="workspace">
@@ -163,7 +173,7 @@ export default function App() {
               </div>
             </main>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   )

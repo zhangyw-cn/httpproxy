@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestEffective(t *testing.T) {
@@ -189,6 +190,54 @@ func TestSession(t *testing.T) {
 			t.Fatalf("file %+v runtime %+v", gotFile, gotRuntime)
 		}
 	})
+}
+
+func TestSaveAndApplyBlocksASecondSave(t *testing.T) {
+	d, file, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewSession(d, file, Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+	first := savedValues(file)
+	second := first
+	second.Theme = "dark"
+	second.MaxFlows = 3
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		_, err := s.SaveAndApply(first, func(Applied) {
+			close(started)
+			<-release
+		})
+		if err != nil {
+			t.Errorf("first save: %v", err)
+		}
+	}()
+	<-started
+
+	done := make(chan struct{})
+	go func() {
+		if _, err := s.Save(second); err != nil {
+			t.Errorf("second save: %v", err)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("second save ran while the first apply still held the lock")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("second save did not finish after the first apply released the lock")
+	}
+	got, _ := s.Snapshot()
+	if got.Theme != second.Theme || got.MaxFlows != second.MaxFlows {
+		t.Fatalf("file after second save: %+v", got)
+	}
 }
 
 func savedValues(file Values) Values {

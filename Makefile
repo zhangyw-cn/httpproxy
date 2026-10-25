@@ -12,9 +12,10 @@ web:
 dev-web:
 	cd web && npm run dev
 
-# Run the complete Go test suite.
+# Run the Go suite and the web column tests.
 test:
 	go test ./...
+	cd web && npm test
 
 # List the documented development targets.
 help:
@@ -22,4 +23,4 @@ help:
 		'build    Build the embedded UI and bin/httpproxy' \
 		'web      Install dependencies and build the embedded UI' \
 		'dev-web  Start the Vite development server' \
-		'test     Run all Go tests'
+		'test     Run Go tests and the web column tests'

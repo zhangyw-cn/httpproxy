@@ -83,30 +83,37 @@ code, pre { font-family: var(--mono); }
 .filterbar {
   display: flex; align-items: center; gap: 8px;
   position: relative; z-index: 2;
+  min-width: 0;
   padding: 4px 12px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex: none;
 }
+.filterbar-main {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto; min-width: 0;
+  overflow-x: auto;
+}
 .input {
+  flex: none;
   height: 22px; width: 180px; padding: 0 8px;
   font: inherit; color: var(--text);
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
 }
 .input:focus { border-color: var(--accent); }
 .input-status { width: 70px; }
-.chips { display: flex; gap: 4px; margin-left: 4px; }
+.chips { display: flex; flex: none; gap: 4px; margin-left: 4px; }
 .chip {
   height: 20px; padding: 0 8px; font: inherit; color: var(--text-muted);
   background: transparent; border: 1px solid transparent; border-radius: 10px; cursor: pointer;
 }
 .chip:hover { background: var(--bg-hover); }
 .chip.active { color: var(--accent); background: var(--accent-bg); border-color: var(--accent); }
-.col-picker { position: relative; margin-left: auto; }
+.col-picker { position: relative; flex: none; }
 .col-picker-btn.open { color: var(--accent); border-color: var(--accent); }
 .col-menu {
   position: absolute; top: calc(100% + 4px); right: 0; z-index: 2;
-  min-width: 140px; max-height: 320px; overflow: auto;
+  min-width: 140px; max-height: min(320px, calc(100vh - 80px)); overflow: auto;
   padding: 4px 0;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
@@ -116,7 +123,8 @@ code, pre { font-family: var(--mono); }
   height: 24px; padding: 0 10px;
   cursor: pointer; white-space: nowrap;
 }
-.col-menu-item:hover { background: var(--bg-hover); }
+.col-menu-item:not(:has(input:disabled)):hover { background: var(--bg-hover); }
+.col-menu-item:has(input:disabled) { cursor: default; }
 .col-menu-item input { margin: 0; }
 
 /* Workspace: top table / bottom detail */

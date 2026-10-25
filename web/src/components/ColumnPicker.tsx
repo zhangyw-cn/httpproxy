@@ -38,6 +38,8 @@ export default function ColumnPicker({ visible, onChange }: Props) {
       <button
         type="button"
         className={`btn col-picker-btn${open ? ' open' : ''}`}
+        aria-expanded={open}
+        aria-haspopup="true"
         onClick={() => setOpen((value) => !value)}
       >列</button>
       {open && (
