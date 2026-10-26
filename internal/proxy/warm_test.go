@@ -275,6 +275,68 @@ func TestSNIMismatchReusesUpstream(t *testing.T) {
 	}
 }
 
+func TestSNIHandshakeTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- c
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		select {
+		case c := <-accepted:
+			_ = c.Close()
+		default:
+		}
+	})
+
+	manager, pool := newCA(t)
+	p := startProxy(t, &memSink{}, 1024, manager)
+	conn, err := dialMITM(t, p.Addr(), ln.Addr().String(), &tls.Config{
+		RootCAs:    pool,
+		ServerName: "name.example",
+		NextProtos: []string{"http/1.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// dialMITM leaves a 5s deadline on the client conn. The upstream handshake
+	// is allowed 10s, so clear it before sending the request.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: name.example\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+	if elapsed >= 15*time.Second {
+		t.Fatalf("response took %s, want under 15s", elapsed)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 type gateSink struct {
 	mu      sync.Mutex
 	order   []string

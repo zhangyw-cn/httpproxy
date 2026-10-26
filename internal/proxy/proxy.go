@@ -271,7 +271,9 @@ func (p *Proxy) sniTransport(dialHost, sniHost string) *http.Transport {
 			return nil, err
 		}
 		tc := tls.Client(raw, tr.TLSClientConfig)
-		if err := tc.HandshakeContext(ctx); err != nil {
+		hsCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := tc.HandshakeContext(hsCtx); err != nil {
 			_ = raw.Close()
 			return nil, err
 		}
