@@ -3,6 +3,8 @@ package proxy
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -60,48 +62,100 @@ func trustClient(t *testing.T, proxyAddr string, pool *x509.CertPool, idlePerHos
 
 func getOK(t *testing.T, client *http.Client, rawURL string) {
 	t.Helper()
-	resp, err := client.Get(rawURL)
-	if err != nil {
+	if err := fetchOK(client, rawURL); err != nil {
 		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
 	}
 }
 
+func fetchOK(client *http.Client, rawURL string) error {
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status = %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// handlerGate holds each wave's handlers until all of them are inside the
+// request, so none can finish and return its upstream connection to the pool
+// before the other dials have happened.
+type handlerGate struct {
+	need    int
+	mu      sync.Mutex
+	entered int
+	release chan struct{}
+}
+
+func newHandlerGate(n int) *handlerGate {
+	return &handlerGate{need: n, release: make(chan struct{})}
+}
+
+func (g *handlerGate) arrive() {
+	g.mu.Lock()
+	g.entered++
+	ch := g.release
+	if g.entered == g.need {
+		close(ch)
+	}
+	g.mu.Unlock()
+	<-ch
+}
+
+func (g *handlerGate) reset() {
+	g.mu.Lock()
+	g.entered = 0
+	g.release = make(chan struct{})
+	g.mu.Unlock()
+}
+
 func TestIdleConnsReuseSixHTTP1(t *testing.T) {
+	const waveSize = 6
+	gate := newHandlerGate(waveSize)
 	srv, count := http1TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gate.arrive()
 		_, _ = io.WriteString(w, "ok")
 	}))
 	manager, pool := newCA(t)
 	p := startProxy(t, &memSink{}, 1024, manager)
-	client := trustClient(t, p.Addr(), pool, 6)
+	client := trustClient(t, p.Addr(), pool, waveSize)
+	// Block a seventh client connection while the previous handlers are still
+	// unwinding, so the next wave reuses the idle upstream connections.
+	client.Transport.(*http.Transport).MaxConnsPerHost = waveSize
 
-	wave := func() {
+	wave := func() error {
+		gate.reset()
 		var wg sync.WaitGroup
+		errs := make([]error, waveSize)
 		start := make(chan struct{})
-		wg.Add(6)
-		for i := 0; i < 6; i++ {
-			go func() {
+		wg.Add(waveSize)
+		for i := 0; i < waveSize; i++ {
+			go func(i int) {
 				defer wg.Done()
 				<-start
-				getOK(t, client, srv.URL)
-			}()
+				errs[i] = fetchOK(client, srv.URL)
+			}(i)
 		}
 		close(start)
 		wg.Wait()
+		return errors.Join(errs...)
 	}
-	wave()
-	if got := count.n.Load(); got != 6 {
-		t.Fatalf("first wave accepts = %d, want 6", got)
+	if err := wave(); err != nil {
+		t.Fatal(err)
 	}
-	wave()
-	if got := count.n.Load(); got != 6 {
-		t.Fatalf("second wave accepts = %d, want 6", got)
+	if got := count.n.Load(); got != waveSize {
+		t.Fatalf("first wave accepts = %d, want %d", got, waveSize)
+	}
+	if err := wave(); err != nil {
+		t.Fatal(err)
+	}
+	if got := count.n.Load(); got != waveSize {
+		t.Fatalf("second wave accepts = %d, want %d", got, waveSize)
 	}
 }
 
