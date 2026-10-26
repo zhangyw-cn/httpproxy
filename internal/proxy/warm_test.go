@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -230,5 +231,43 @@ func TestUpstreamTLSResumesWhenKeepAliveIsOff(t *testing.T) {
 	defer mu.Unlock()
 	if len(resumed) != 2 || resumed[0] || !resumed[1] {
 		t.Fatalf("DidResume = %v, want [false true]", resumed)
+	}
+}
+
+func TestSNIMismatchReusesUpstream(t *testing.T) {
+	srv, count := http1TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "sni-ok")
+	}))
+	manager, pool := newCA(t)
+	p := startProxy(t, &memSink{}, 1024, manager)
+	target := srv.Listener.Addr().String()
+	for i := 0; i < 2; i++ {
+		conn, err := dialMITM(t, p.Addr(), target, &tls.Config{
+			RootCAs:    pool,
+			ServerName: "name.example",
+			NextProtos: []string{"http/1.1"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: name.example\r\nConnection: close\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		_ = conn.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != "sni-ok" {
+			t.Fatalf("body = %q", body)
+		}
+	}
+	if got := count.n.Load(); got != 1 {
+		t.Fatalf("upstream accepts = %d, want 1", got)
 	}
 }

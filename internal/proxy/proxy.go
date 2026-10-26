@@ -20,7 +20,13 @@ const (
 	maxIdleConnsTotal   = 128
 	maxIdleConnsPerHost = 6
 	sessionCacheEntries = 128
+	maxSNITransports    = 32
 )
+
+type sniTransport struct {
+	key string
+	tr  *http.Transport
+}
 
 type Proxy struct {
 	addr    string
@@ -39,6 +45,7 @@ type Proxy struct {
 	transport                *http.Transport
 	upstreamDisableKeepAlive bool
 	sessions                 tls.ClientSessionCache
+	sniTransports            []sniTransport
 }
 
 func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
@@ -190,6 +197,8 @@ func (p *Proxy) Close() error {
 		conns = append(conns, conn)
 	}
 	transport := p.transport
+	sniTransports := make([]sniTransport, len(p.sniTransports))
+	copy(sniTransports, p.sniTransports)
 	p.mu.Unlock()
 
 	var closeErr error
@@ -201,6 +210,9 @@ func (p *Proxy) Close() error {
 	}
 	if transport != nil {
 		transport.CloseIdleConnections()
+	}
+	for _, entry := range sniTransports {
+		entry.tr.CloseIdleConnections()
 	}
 	return closeErr
 }
@@ -214,51 +226,77 @@ func (p *Proxy) Addr() string {
 	return p.listener.Addr().String()
 }
 
+func (p *Proxy) touchSNI(key string) *http.Transport {
+	for i := range p.sniTransports {
+		if p.sniTransports[i].key != key {
+			continue
+		}
+		entry := p.sniTransports[i]
+		copy(p.sniTransports[i:], p.sniTransports[i+1:])
+		p.sniTransports[len(p.sniTransports)-1] = entry
+		return entry.tr
+	}
+	return nil
+}
+
+func (p *Proxy) sniTransport(dialHost, sniHost string) *http.Transport {
+	key := dialHost + "\n" + sniHost
+	p.mu.Lock()
+	if tr := p.touchSNI(key); tr != nil {
+		p.mu.Unlock()
+		return tr
+	}
+	p.mu.Unlock()
+
+	base := p.baseTLS()
+	base.ServerName = sniHost
+	tr := p.buildTransport(base, maxIdleConnsPerHost, maxIdleConnsPerHost)
+	tr.DialTLSContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+		raw, err := d.DialContext(ctx, network, dialHost)
+		if err != nil {
+			return nil, err
+		}
+		tc := tls.Client(raw, tr.TLSClientConfig)
+		if err := tc.HandshakeContext(ctx); err != nil {
+			_ = raw.Close()
+			return nil, err
+		}
+		return tc, nil
+	}
+
+	p.mu.Lock()
+	if existing := p.touchSNI(key); existing != nil {
+		p.mu.Unlock()
+		tr.CloseIdleConnections()
+		return existing
+	}
+	var evict *http.Transport
+	if len(p.sniTransports) == maxSNITransports {
+		evict = p.sniTransports[0].tr
+		p.sniTransports = p.sniTransports[1:]
+	}
+	p.sniTransports = append(p.sniTransports, sniTransport{key: key, tr: tr})
+	p.mu.Unlock()
+	if evict != nil {
+		evict.CloseIdleConnections()
+	}
+	return tr
+}
+
 // roundTrip forwards req. When upstreamSNI is set (HTTPS MITM with a DNS SNI
 // while CONNECT targeted an IP), TLS uses that name for certificate verification
 // while still dialing req.URL.Host.
 func (p *Proxy) roundTrip(req *http.Request, upstreamSNI string) (*http.Response, error) {
-	tr := p.upstream()
 	if upstreamSNI == "" || !strings.EqualFold(req.URL.Scheme, "https") {
-		return tr.RoundTrip(req)
+		return p.upstream().RoundTrip(req)
 	}
 	dialHost := req.URL.Host
 	sniHost := hostWithoutPort(upstreamSNI)
 	if sniHost == "" || strings.EqualFold(sniHost, hostWithoutPort(dialHost)) {
-		return tr.RoundTrip(req)
+		return p.upstream().RoundTrip(req)
 	}
-	baseTLS := tr.TLSClientConfig
-	if baseTLS == nil {
-		baseTLS = &tls.Config{}
-	}
-	tlsCfg := baseTLS.Clone()
-	tlsCfg.ServerName = sniHost
-	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
-	custom := &http.Transport{
-		Proxy:                 tr.Proxy,
-		DialContext:           tr.DialContext,
-		ForceAttemptHTTP2:     true,
-		DisableCompression:    true,
-		MaxIdleConns:          tr.MaxIdleConns,
-		IdleConnTimeout:       tr.IdleConnTimeout,
-		TLSHandshakeTimeout:   tr.TLSHandshakeTimeout,
-		ExpectContinueTimeout: tr.ExpectContinueTimeout,
-		TLSClientConfig:       tlsCfg,
-		DialTLSContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-			raw, err := d.DialContext(ctx, network, dialHost)
-			if err != nil {
-				return nil, err
-			}
-			tc := tls.Client(raw, tlsCfg)
-			if err := tc.HandshakeContext(ctx); err != nil {
-				_ = raw.Close()
-				return nil, err
-			}
-			return tc, nil
-		},
-	}
-	return custom.RoundTrip(req)
+	return p.sniTransport(dialHost, sniHost).RoundTrip(req)
 }
 
 func (p *Proxy) isLoopbackTarget(u *url.URL) bool {
