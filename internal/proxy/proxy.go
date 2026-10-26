@@ -46,6 +46,13 @@ type Proxy struct {
 	upstreamDisableKeepAlive bool
 	sessions                 tls.ClientSessionCache
 	sniTransports            []sniTransport
+	recordQueue              int
+	recordGate               chan struct{}
+	jobs                     chan recordJob
+	recStarted               bool
+	recStop                  sync.Once
+	recWG                    sync.WaitGroup
+	handlerWG                sync.WaitGroup
 }
 
 func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
@@ -53,11 +60,12 @@ func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
 		maxBody = 0
 	}
 	return &Proxy{
-		addr:    addr,
-		sink:    sink,
-		maxBody: maxBody,
-		ca:      ca,
-		conns:   make(map[net.Conn]struct{}),
+		addr:        addr,
+		sink:        sink,
+		maxBody:     maxBody,
+		ca:          ca,
+		conns:       make(map[net.Conn]struct{}),
+		recordQueue: defaultRecordQueue,
 	}
 }
 
@@ -154,6 +162,8 @@ func (p *Proxy) ListenAndServe() error {
 	p.listener = listener
 	p.mu.Unlock()
 
+	p.ensureRecorder()
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -170,9 +180,11 @@ func (p *Proxy) ListenAndServe() error {
 			return nil
 		}
 		p.conns[conn] = struct{}{}
+		p.handlerWG.Add(1)
 		p.mu.Unlock()
 
 		go func() {
+			defer p.handlerWG.Done()
 			defer func() {
 				_ = conn.Close()
 				p.mu.Lock()
@@ -197,8 +209,7 @@ func (p *Proxy) Close() error {
 		conns = append(conns, conn)
 	}
 	transport := p.transport
-	sniTransports := make([]sniTransport, len(p.sniTransports))
-	copy(sniTransports, p.sniTransports)
+	sni := append([]sniTransport(nil), p.sniTransports...)
 	p.mu.Unlock()
 
 	var closeErr error
@@ -211,9 +222,11 @@ func (p *Proxy) Close() error {
 	if transport != nil {
 		transport.CloseIdleConnections()
 	}
-	for _, entry := range sniTransports {
+	for _, entry := range sni {
 		entry.tr.CloseIdleConnections()
 	}
+	p.handlerWG.Wait()
+	p.stopRecorder()
 	return closeErr
 }
 

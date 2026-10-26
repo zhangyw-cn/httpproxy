@@ -14,8 +14,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/net/http2"
+
+	"httpproxy/internal/flow"
 )
 
 type countingListener struct {
@@ -270,4 +273,189 @@ func TestSNIMismatchReusesUpstream(t *testing.T) {
 	if got := count.n.Load(); got != 1 {
 		t.Fatalf("upstream accepts = %d, want 1", got)
 	}
+}
+
+type gateSink struct {
+	mu      sync.Mutex
+	order   []string
+	updated []flow.Flow
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *gateSink) OnCreated(f flow.Flow) {
+	s.mu.Lock()
+	s.order = append(s.order, "c:"+f.ID)
+	s.mu.Unlock()
+}
+
+func (s *gateSink) OnUpdated(f flow.Flow) {
+	s.once.Do(func() {
+		close(s.entered)
+		<-s.release
+	})
+	s.mu.Lock()
+	s.order = append(s.order, "u:"+f.ID)
+	s.updated = append(s.updated, f)
+	s.mu.Unlock()
+}
+
+func TestSecondRequestReturnsWhileUpdateIsBlocked(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.URL.Path)
+	}))
+	t.Cleanup(upstream.Close)
+	manager, pool := newCA(t)
+	sink := &gateSink{entered: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(sink.release) }) }
+	p := New("127.0.0.1:0", sink, 1024, manager)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true}
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.ListenAndServe() }()
+	defer func() {
+		release()
+		_ = p.Close()
+		if err := <-errCh; err != nil {
+			t.Errorf("ListenAndServe: %v", err)
+		}
+	}()
+	client := trustClient(t, waitAddr(t, p), pool, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		getOK(t, client, upstream.URL+"/one")
+		getOK(t, client, upstream.URL+"/two")
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second request waited for OnUpdated")
+	}
+	release()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		n := len(sink.updated)
+		sink.mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.updated) != 2 {
+		t.Fatalf("updated = %d, want 2", len(sink.updated))
+	}
+	got := map[string]string{}
+	for _, f := range sink.updated {
+		got[f.Path] = string(f.RespBody)
+	}
+	if got["/one"] != "/one" || got["/two"] != "/two" {
+		t.Fatalf("bodies = %v", got)
+	}
+}
+
+func TestFullQueueRecordsTheNewFlowInline(t *testing.T) {
+	holdFirst := make(chan struct{})
+	started := make(chan struct{})
+	var startOnce sync.Once
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			startOnce.Do(func() { close(started) })
+			<-holdFirst
+		}
+		_, _ = io.WriteString(w, r.URL.Path)
+	}))
+	var openUpstream sync.Once
+	releaseUpstream := func() { openUpstream.Do(func() { close(holdFirst) }) }
+	t.Cleanup(func() {
+		releaseUpstream()
+		srv.Close()
+	})
+	manager, pool := newCA(t)
+	sink := &gateSink{entered: make(chan struct{}), release: make(chan struct{})}
+	close(sink.release)
+	p := New("127.0.0.1:0", sink, 8, manager)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true}
+	p.recordQueue = 1
+	p.recordGate = make(chan struct{})
+	var openGate sync.Once
+	releaseGate := func() { openGate.Do(func() { close(p.recordGate) }) }
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.ListenAndServe() }()
+	t.Cleanup(func() {
+		releaseGate()
+		releaseUpstream()
+		_ = p.Close()
+		if err := <-errCh; err != nil {
+			t.Errorf("ListenAndServe: %v", err)
+		}
+	})
+	client := trustClient(t, waitAddr(t, p), pool, 2)
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		getOK(t, client, srv.URL+"/first")
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not reach the upstream")
+	}
+	getOK(t, client, srv.URL+"/second")
+	sink.mu.Lock()
+	var secondID string
+	var secondBody string
+	for _, f := range sink.updated {
+		if f.Path == "/second" {
+			secondID = f.ID
+			secondBody = string(f.RespBody)
+		}
+	}
+	order := append([]string(nil), sink.order...)
+	sink.mu.Unlock()
+	if secondID == "" || secondBody != "/second" {
+		t.Fatalf("second flow id=%q body=%q", secondID, secondBody)
+	}
+	if indexOf(order, "c:"+secondID) < 0 || indexOf(order, "c:"+secondID) > indexOf(order, "u:"+secondID) {
+		t.Fatalf("second order = %v", order)
+	}
+	releaseGate()
+	releaseUpstream()
+	select {
+	case <-firstDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not finish after the gate opened")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var firstID string
+	for time.Now().Before(deadline) {
+		sink.mu.Lock()
+		order = append([]string(nil), sink.order...)
+		for _, f := range sink.updated {
+			if f.Path == "/first" && string(f.RespBody) == "/first" {
+				firstID = f.ID
+			}
+		}
+		sink.mu.Unlock()
+		if firstID != "" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if firstID == "" || indexOf(order, "c:"+firstID) < 0 || indexOf(order, "c:"+firstID) > indexOf(order, "u:"+firstID) {
+		t.Fatalf("first id %q order %v", firstID, order)
+	}
+}
+
+func indexOf(items []string, want string) int {
+	for i, item := range items {
+		if item == want {
+			return i
+		}
+	}
+	return -1
 }

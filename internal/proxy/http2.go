@@ -38,25 +38,22 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 		StartedAt:   started,
 		ClientAddr:  req.RemoteAddr,
 	}
-	reqCapture, limit := p.startFlow(req, &f)
-
+	rec, limit := p.startFlow(req, &f)
 	req.URL.Scheme = "https"
 	req.URL.Host = connectAuthority
 	if p.isLoopbackTarget(req.URL) {
-		p.failUpstream(&f, reqCapture, req, errSelfProxy, limit)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		p.failUpstream(rec, errSelfProxy)
 		return
 	}
 	prepareOutgoing(req, false)
-
 	resp, err := p.roundTrip(req, upstreamSNI)
 	if err != nil {
-		p.failUpstream(&f, reqCapture, req, err, limit)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		p.failUpstream(rec, err)
 		return
 	}
-	defer resp.Body.Close()
-
+	defer func() { _ = resp.Body.Close() }()
 	f.StatusCode = resp.StatusCode
 	f.RespHeaders = copyHeaders(resp.Header)
 	removeHopHeaders(resp.Header)
@@ -66,14 +63,15 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-
 	respCapture := newBodyCapture(limit)
 	writeErr := copyAndFlush(w, io.TeeReader(resp.Body, respCapture))
 	if writeErr != nil {
 		_, _ = io.Copy(respCapture, resp.Body)
 		f.Error = writeErr.Error()
 	}
-	p.finishResponse(&f, reqCapture, req, resp, respCapture, limit)
+	_ = resp.Body.Close()
+	resp.Body = http.NoBody
+	p.finishRecord(rec, resp.Header, respCapture)
 }
 
 func copyAndFlush(w http.ResponseWriter, r io.Reader) error {
