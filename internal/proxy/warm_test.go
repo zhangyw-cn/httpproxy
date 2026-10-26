@@ -459,3 +459,64 @@ func indexOf(items []string, want string) int {
 	}
 	return -1
 }
+
+func TestCloseWaitsForHTTP2Stream(t *testing.T) {
+	entered := make(chan struct{})
+	var once sync.Once
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(entered) })
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+
+	manager, pool := newCA(t)
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, manager)
+
+	proxyURL, err := url.Parse("http://" + p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{
+		Proxy:             http.ProxyURL(proxyURL),
+		TLSClientConfig:   &tls.Config{RootCAs: pool},
+		ForceAttemptHTTP2: true,
+	}
+	if err := http2.ConfigureTransport(transport); err != nil {
+		t.Fatal(err)
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+
+	getErr := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(upstream.URL + "/stall")
+		if err != nil {
+			getErr <- err
+			return
+		}
+		_, err = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		getErr <- err
+	}()
+
+	select {
+	case <-entered:
+	case err := <-getErr:
+		t.Fatalf("client finished before the upstream handler entered: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream handler did not enter")
+	}
+
+	_ = p.Close()
+
+	if _, updated := sink.counts(); updated < 1 {
+		t.Fatal("Close returned before OnUpdated")
+	}
+
+	select {
+	case <-getErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("client Get did not return after Close")
+	}
+}

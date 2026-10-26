@@ -22,6 +22,15 @@ func (p *Proxy) handleHTTP2(conn *tls.Conn, connectAuthority, upstreamSNI string
 }
 
 func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, connectAuthority, upstreamSNI string) {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.handlerWG.Add(1)
+	p.mu.Unlock()
+	defer p.handlerWG.Done()
+
 	started := time.Now()
 	clientBody := req.Body
 	if clientBody != nil {
