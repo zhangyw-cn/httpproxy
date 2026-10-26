@@ -16,6 +16,11 @@ import (
 
 var errSelfProxy = errors.New("refusing to proxy to the proxy's own listen address")
 
+const (
+	maxIdleConnsTotal   = 128
+	maxIdleConnsPerHost = 6
+)
+
 type Proxy struct {
 	addr    string
 	sink    FlowSink
@@ -63,28 +68,49 @@ func (p *Proxy) maxBodyLimit() int64 {
 	return p.maxBody
 }
 
+func (p *Proxy) baseTLS() *tls.Config {
+	if p.UpstreamTLS != nil {
+		return p.UpstreamTLS.Clone()
+	}
+	return &tls.Config{}
+}
+
+func (p *Proxy) buildTransport(base *tls.Config, maxIdle, perHost int) *http.Transport {
+	if base == nil {
+		base = &tls.Config{}
+	}
+	cfg := base.Clone()
+	cfg.NextProtos = []string{"h2", "http/1.1"}
+	return &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSClientConfig:       cfg,
+		ForceAttemptHTTP2:     true,
+		DisableCompression:    true,
+		MaxIdleConns:          maxIdle,
+		MaxIdleConnsPerHost:   perHost,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
 // upstream returns the shared client transport, built lazily so tests can set
 // UpstreamTLS after New. It negotiates h2 or HTTP/1.1 per upstream server,
 // independently of the protocol the client spoke to the proxy.
 func (p *Proxy) upstream() *http.Transport {
 	p.mu.Lock()
+	tr := p.transport
+	base := p.baseTLS()
+	p.mu.Unlock()
+	if tr != nil {
+		return tr
+	}
+	built := p.buildTransport(base, maxIdleConnsTotal, maxIdleConnsPerHost)
+	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.transport == nil {
-		tlsConfig := &tls.Config{}
-		if p.UpstreamTLS != nil {
-			tlsConfig = p.UpstreamTLS.Clone()
-		}
-		tlsConfig.NextProtos = []string{"h2", "http/1.1"}
-		p.transport = &http.Transport{
-			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			TLSClientConfig:       tlsConfig,
-			ForceAttemptHTTP2:     true,
-			DisableCompression:    true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
+		p.transport = built
+		return built
 	}
 	return p.transport
 }
