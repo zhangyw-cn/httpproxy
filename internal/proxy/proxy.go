@@ -19,6 +19,7 @@ var errSelfProxy = errors.New("refusing to proxy to the proxy's own listen addre
 const (
 	maxIdleConnsTotal   = 128
 	maxIdleConnsPerHost = 6
+	sessionCacheEntries = 128
 )
 
 type Proxy struct {
@@ -31,11 +32,13 @@ type Proxy struct {
 	// NextProtos are ignored: upstream ALPN always offers h2 and http/1.1.
 	UpstreamTLS *tls.Config
 
-	mu        sync.Mutex
-	listener  net.Listener
-	conns     map[net.Conn]struct{}
-	closed    bool
-	transport *http.Transport
+	mu                       sync.Mutex
+	listener                 net.Listener
+	conns                    map[net.Conn]struct{}
+	closed                   bool
+	transport                *http.Transport
+	upstreamDisableKeepAlive bool
+	sessions                 tls.ClientSessionCache
 }
 
 func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
@@ -75,17 +78,31 @@ func (p *Proxy) baseTLS() *tls.Config {
 	return &tls.Config{}
 }
 
+func (p *Proxy) sessionCache() tls.ClientSessionCache {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.sessions == nil {
+		p.sessions = tls.NewLRUClientSessionCache(sessionCacheEntries)
+	}
+	return p.sessions
+}
+
 func (p *Proxy) buildTransport(base *tls.Config, maxIdle, perHost int) *http.Transport {
 	if base == nil {
 		base = &tls.Config{}
 	}
+	p.mu.Lock()
+	disableKeepAlive := p.upstreamDisableKeepAlive
+	p.mu.Unlock()
 	cfg := base.Clone()
 	cfg.NextProtos = []string{"h2", "http/1.1"}
+	cfg.ClientSessionCache = p.sessionCache()
 	return &http.Transport{
 		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSClientConfig:       cfg,
 		ForceAttemptHTTP2:     true,
 		DisableCompression:    true,
+		DisableKeepAlives:     disableKeepAlive,
 		MaxIdleConns:          maxIdle,
 		MaxIdleConnsPerHost:   perHost,
 		IdleConnTimeout:       90 * time.Second,

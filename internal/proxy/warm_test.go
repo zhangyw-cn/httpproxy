@@ -200,3 +200,35 @@ func TestSequentialHTTP2UsesOneUpstream(t *testing.T) {
 		t.Fatalf("accepts = %d, want 1", got)
 	}
 }
+
+func TestUpstreamTLSResumesWhenKeepAliveIsOff(t *testing.T) {
+	var mu sync.Mutex
+	var resumed []bool
+	srv, _ := http1TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		resumed = append(resumed, r.TLS != nil && r.TLS.DidResume)
+		mu.Unlock()
+		_, _ = io.WriteString(w, "ok")
+	}))
+	manager, pool := newCA(t)
+	sink := &memSink{}
+	p := New("127.0.0.1:0", sink, 1024, manager)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true}
+	p.upstreamDisableKeepAlive = true
+	errCh := make(chan error, 1)
+	go func() { errCh <- p.ListenAndServe() }()
+	t.Cleanup(func() {
+		_ = p.Close()
+		if err := <-errCh; err != nil {
+			t.Errorf("ListenAndServe: %v", err)
+		}
+	})
+	client := trustClient(t, waitAddr(t, p), pool, 1)
+	getOK(t, client, srv.URL)
+	getOK(t, client, srv.URL)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(resumed) != 2 || resumed[0] || !resumed[1] {
+		t.Fatalf("DidResume = %v, want [false true]", resumed)
+	}
+}
