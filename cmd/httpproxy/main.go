@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"httpproxy/internal/api"
+	"httpproxy/internal/capture"
 	"httpproxy/internal/cert"
 	"httpproxy/internal/config"
 	"httpproxy/internal/proxy"
@@ -81,6 +82,12 @@ func run(args []string) int {
 	apiServer := api.New(st, ca, session, nil)
 	proxyServer := proxy.New(runtime.Proxy, apiServer.Sink(), runtime.MaxBody, ca)
 	apiServer.SetProxy(proxyServer)
+	policy, err := capture.Compile(runtime.Capture, runtime.CaptureEmpty, runtime.CaptureHTTPS, runtime.CaptureHosts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	proxyServer.SetPolicy(policy)
 
 	root := http.NewServeMux()
 	apiHandler := apiServer.Handler()
