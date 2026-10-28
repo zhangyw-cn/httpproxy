@@ -50,6 +50,10 @@ export interface ConfigValues {
   max_flows: number
   max_body: number
   theme: 'dark' | 'light'
+  capture: boolean
+  capture_empty: 'all' | 'none'
+  capture_https: 'decrypt' | 'tunnel'
+  capture_hosts: string[]
 }
 
 export interface ConfigSnapshot {
