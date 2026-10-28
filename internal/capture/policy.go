@@ -143,9 +143,13 @@ func parseRule(s string) (rule, string, error) {
 			return rule{}, "", ErrCaptureHost
 		}
 	}
+	bracketed := strings.HasPrefix(rest, "[")
 	host, portText, err := splitPattern(rest)
 	if err != nil {
 		return rule{}, "", err
+	}
+	if bracketed && net.ParseIP(host) == nil {
+		return rule{}, "", ErrCaptureHost
 	}
 	parsed := rule{wildcard: wildcard, anyPort: portText == ""}
 	if portText == "" {
