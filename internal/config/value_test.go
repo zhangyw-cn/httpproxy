@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -11,15 +12,15 @@ func TestDefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != Defaults() {
+	if !reflect.DeepEqual(got, Defaults()) {
 		t.Fatalf("%+v", got)
 	}
 	text := string(MarshalYAML(Defaults()))
-	for i, key := range []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:"} {
+	for i, key := range []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:", "capture:", "capture_empty:", "capture_https:", "capture_hosts:"} {
 		if strings.Index(text, key) < 0 {
 			t.Fatalf("missing %s", key)
 		}
-		if i > 0 && strings.Index(text, key) < strings.Index(text, []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:"}[i-1]) {
+		if i > 0 && strings.Index(text, key) < strings.Index(text, []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:", "capture:", "capture_empty:", "capture_https:", "capture_hosts:"}[i-1]) {
 			t.Fatalf("order %s", text)
 		}
 	}
@@ -63,16 +64,16 @@ func TestParseYAMLRejectsShape(t *testing.T) {
 }
 
 func TestParseJSON(t *testing.T) {
-	raw := []byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":2,"max_body":3,"theme":"dark"}`)
+	raw := []byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":2,"max_body":3,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`)
 	got, err := ParseJSON(raw)
 	if err != nil || got.MaxFlows != 2 || got.MaxBody != 3 {
 		t.Fatalf("%+v %v", got, err)
 	}
 	for _, body := range [][]byte{
-		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1.5,"max_body":1,"theme":"dark"}`),
+		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1.5,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`),
 		[]byte(`not json`),
-		[]byte(`{"proxy":null,"ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark"}`),
-		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","x":1}`),
+		[]byte(`{"proxy":null,"ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`),
+		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","x":1,"capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`),
 	} {
 		if _, err := ParseJSON(body); err == nil {
 			t.Fatalf("accepted %s", body)
@@ -82,18 +83,68 @@ func TestParseJSON(t *testing.T) {
 	if !errors.Is(err, ErrMissingField) {
 		t.Fatal(err)
 	}
-	_, err = ParseJSON([]byte(`{"proxy":null,"ui":"nope","max_flows":1,"max_body":1,"theme":"dark"}`))
+	_, err = ParseJSON([]byte(`{"proxy":null,"ui":"nope","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`))
 	if !errors.Is(err, ErrUIAddress) {
 		t.Fatalf("present UI error wins over a missing proxy, got %v", err)
 	}
 }
 
 func TestParseJSONRejectsTrailingBytes(t *testing.T) {
-	valid := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark"}`
+	valid := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`
 	for _, suffix := range []string{"]", "}{", valid} {
 		_, err := ParseJSON([]byte(valid + suffix))
 		if !errors.Is(err, ErrJSON) {
 			t.Fatalf("suffix %q: got %v", suffix, err)
 		}
+	}
+}
+
+func TestParseYAMLDefaultsCaptureFields(t *testing.T) {
+	raw := []byte("proxy: \"127.0.0.1:8080\"\nui: \"127.0.0.1:8081\"\nmax_flows: 1000\nmax_body: 1048576\ntheme: dark\n")
+	got, err := ParseYAML(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Capture || got.CaptureEmpty != "all" || got.CaptureHTTPS != "decrypt" || len(got.CaptureHosts) != 0 || got.CaptureHosts == nil {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestParseYAMLRejectsBadCapture(t *testing.T) {
+	base := "proxy: \"127.0.0.1:8080\"\nui: \"127.0.0.1:8081\"\nmax_flows: 1\nmax_body: 1\ntheme: dark\n"
+	cases := []struct {
+		extra string
+		want  error
+	}{
+		{"capture: \"true\"\ncapture_empty: all\ncapture_https: decrypt\ncapture_hosts: []\n", ErrCapture},
+		{"capture: true\ncapture_empty: maybe\ncapture_https: decrypt\ncapture_hosts: []\n", ErrCaptureEmpty},
+		{"capture: true\ncapture_empty: all\ncapture_https: pass\ncapture_hosts: []\n", ErrCaptureHTTPS},
+		{"capture: true\ncapture_empty: all\ncapture_https: decrypt\ncapture_hosts: example.com\n", ErrCaptureHosts},
+		{"capture: true\ncapture_empty: all\ncapture_https: decrypt\ncapture_hosts: [\"*.example.com\", \"*.Example.com\"]\n", ErrCaptureHostDup},
+	}
+	for _, tc := range cases {
+		_, err := ParseYAML([]byte(base + tc.extra))
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("extra %q err %v", tc.extra, err)
+		}
+	}
+}
+
+func TestParseJSONRequiresCaptureFields(t *testing.T) {
+	_, err := ParseJSON([]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark"}`))
+	if !errors.Is(err, ErrMissingField) {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":["Example.com"]}`)
+	got, err := ParseJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Capture || got.CaptureHosts[0] != "Example.com" {
+		t.Fatalf("%+v", got)
+	}
+	text := string(MarshalYAML(got))
+	if !strings.Contains(text, "capture: true\n") || !strings.Contains(text, "capture_hosts:\n") || !strings.Contains(text, "\"Example.com\"") {
+		t.Fatalf("%s", text)
 	}
 }

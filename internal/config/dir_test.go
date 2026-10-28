@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != Defaults() {
+		if !reflect.DeepEqual(got, Defaults()) {
 			t.Fatalf("%+v", got)
 		}
 		if !strings.HasSuffix(d.Path(), ".httpproxy") {
@@ -183,7 +184,7 @@ func TestSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != v {
+	if !reflect.DeepEqual(got, v) {
 		t.Fatalf("%+v", got)
 	}
 	matches, err := filepath.Glob(filepath.Join(d.Path(), ".config-*.tmp"))

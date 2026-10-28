@@ -9,43 +9,65 @@ import (
 	"strconv"
 	"strings"
 
+	"httpproxy/internal/capture"
+
 	"gopkg.in/yaml.v3"
 )
 
 type Values struct {
-	Proxy    string `json:"proxy" yaml:"proxy"`
-	UI       string `json:"ui" yaml:"ui"`
-	MaxFlows int    `json:"max_flows" yaml:"max_flows"`
-	MaxBody  int64  `json:"max_body" yaml:"max_body"`
-	Theme    string `json:"theme" yaml:"theme"`
+	Proxy        string   `json:"proxy" yaml:"proxy"`
+	UI           string   `json:"ui" yaml:"ui"`
+	MaxFlows     int      `json:"max_flows" yaml:"max_flows"`
+	MaxBody      int64    `json:"max_body" yaml:"max_body"`
+	Theme        string   `json:"theme" yaml:"theme"`
+	Capture      bool     `json:"capture" yaml:"capture"`
+	CaptureEmpty string   `json:"capture_empty" yaml:"capture_empty"`
+	CaptureHTTPS string   `json:"capture_https" yaml:"capture_https"`
+	CaptureHosts []string `json:"capture_hosts" yaml:"capture_hosts"`
 }
 
 var (
-	ErrProxyAddress = errors.New("invalid proxy address")
-	ErrUIAddress    = errors.New("invalid ui address")
-	ErrMaxFlows     = errors.New("max_flows must be an integer >= 1")
-	ErrMaxBody      = errors.New("max_body must be an integer >= 0")
-	ErrTheme        = errors.New("theme must be dark or light")
-	ErrMissingField = errors.New("missing config field")
-	ErrUnknownField = errors.New("unknown config field")
-	ErrJSON         = errors.New("invalid config JSON")
+	ErrProxyAddress      = errors.New("invalid proxy address")
+	ErrUIAddress         = errors.New("invalid ui address")
+	ErrMaxFlows          = errors.New("max_flows must be an integer >= 1")
+	ErrMaxBody           = errors.New("max_body must be an integer >= 0")
+	ErrTheme             = errors.New("theme must be dark or light")
+	ErrMissingField      = errors.New("missing config field")
+	ErrUnknownField      = errors.New("unknown config field")
+	ErrJSON              = errors.New("invalid config JSON")
+	ErrCapture           = capture.ErrCapture
+	ErrCaptureEmpty      = capture.ErrCaptureEmpty
+	ErrCaptureHTTPS      = capture.ErrCaptureHTTPS
+	ErrCaptureHosts      = capture.ErrCaptureHosts
+	ErrCaptureHostsLimit = capture.ErrCaptureHostsLimit
+	ErrCaptureHostLength = capture.ErrCaptureHostLength
+	ErrCaptureHost       = capture.ErrCaptureHost
+	ErrCaptureHostDup    = capture.ErrCaptureHostDup
 )
 
 var knownFields = map[string]struct{}{
-	"proxy":     {},
-	"ui":        {},
-	"max_flows": {},
-	"max_body":  {},
-	"theme":     {},
+	"proxy":         {},
+	"ui":            {},
+	"max_flows":     {},
+	"max_body":      {},
+	"theme":         {},
+	"capture":       {},
+	"capture_empty": {},
+	"capture_https": {},
+	"capture_hosts": {},
 }
 
 func Defaults() Values {
 	return Values{
-		Proxy:    "127.0.0.1:8080",
-		UI:       "127.0.0.1:8081",
-		MaxFlows: 1000,
-		MaxBody:  1048576,
-		Theme:    "dark",
+		Proxy:        "127.0.0.1:8080",
+		UI:           "127.0.0.1:8081",
+		MaxFlows:     1000,
+		MaxBody:      1048576,
+		Theme:        "dark",
+		Capture:      true,
+		CaptureEmpty: "all",
+		CaptureHTTPS: "decrypt",
+		CaptureHosts: []string{},
 	}
 }
 
@@ -72,6 +94,10 @@ func ParseYAML(data []byte) (Values, error) {
 	}
 
 	var out Values
+	out.Capture = true
+	out.CaptureEmpty = "all"
+	out.CaptureHTTPS = "decrypt"
+	out.CaptureHosts = []string{}
 
 	if n, ok := fields["proxy"]; ok && !isYAMLNull(n) {
 		s, err := yamlString(n)
@@ -120,6 +146,37 @@ func ParseYAML(data []byte) (Values, error) {
 		}
 		out.Theme = s
 	}
+	if n, ok := fields["capture"]; ok && !isYAMLNull(n) {
+		b, err := yamlBool(n)
+		if err != nil {
+			return Values{}, ErrCapture
+		}
+		out.Capture = b
+	}
+	if n, ok := fields["capture_empty"]; ok && !isYAMLNull(n) {
+		s, err := yamlString(n)
+		if err != nil {
+			return Values{}, ErrCaptureEmpty
+		}
+		out.CaptureEmpty = s
+	}
+	if n, ok := fields["capture_https"]; ok && !isYAMLNull(n) {
+		s, err := yamlString(n)
+		if err != nil {
+			return Values{}, ErrCaptureHTTPS
+		}
+		out.CaptureHTTPS = s
+	}
+	if n, ok := fields["capture_hosts"]; ok && !isYAMLNull(n) {
+		hosts, err := yamlHostList(n)
+		if err != nil {
+			return Values{}, err
+		}
+		out.CaptureHosts = hosts
+	}
+	if _, err := capture.Compile(out.Capture, out.CaptureEmpty, out.CaptureHTTPS, out.CaptureHosts); err != nil {
+		return Values{}, err
+	}
 
 	for _, key := range []string{"proxy", "ui", "max_flows", "max_body", "theme"} {
 		n, ok := fields[key]
@@ -145,6 +202,10 @@ func ParseJSON(data []byte) (Values, error) {
 	}
 
 	var out Values
+	out.Capture = true
+	out.CaptureEmpty = "all"
+	out.CaptureHTTPS = "decrypt"
+	out.CaptureHosts = []string{}
 
 	if msg, ok := raw["proxy"]; ok && !jsonNull(msg) {
 		s, err := jsonString(msg)
@@ -193,8 +254,39 @@ func ParseJSON(data []byte) (Values, error) {
 		}
 		out.Theme = s
 	}
+	if msg, ok := raw["capture"]; ok && !jsonNull(msg) {
+		var b bool
+		if err := json.Unmarshal(msg, &b); err != nil {
+			return Values{}, ErrCapture
+		}
+		out.Capture = b
+	}
+	if msg, ok := raw["capture_empty"]; ok && !jsonNull(msg) {
+		s, err := jsonString(msg)
+		if err != nil {
+			return Values{}, ErrCaptureEmpty
+		}
+		out.CaptureEmpty = s
+	}
+	if msg, ok := raw["capture_https"]; ok && !jsonNull(msg) {
+		s, err := jsonString(msg)
+		if err != nil {
+			return Values{}, ErrCaptureHTTPS
+		}
+		out.CaptureHTTPS = s
+	}
+	if msg, ok := raw["capture_hosts"]; ok && !jsonNull(msg) {
+		var hosts []string
+		if err := json.Unmarshal(msg, &hosts); err != nil {
+			return Values{}, ErrCaptureHosts
+		}
+		out.CaptureHosts = trimHosts(hosts)
+	}
+	if _, err := capture.Compile(out.Capture, out.CaptureEmpty, out.CaptureHTTPS, out.CaptureHosts); err != nil {
+		return Values{}, err
+	}
 
-	for _, key := range []string{"proxy", "ui", "max_flows", "max_body", "theme"} {
+	for _, key := range []string{"proxy", "ui", "max_flows", "max_body", "theme", "capture", "capture_empty", "capture_https", "capture_hosts"} {
 		msg, ok := raw[key]
 		if !ok || jsonNull(msg) {
 			return Values{}, ErrMissingField
@@ -225,6 +317,30 @@ func MarshalYAML(v Values) []byte {
 	b.WriteString("theme: ")
 	b.WriteString(strconv.Quote(v.Theme))
 	b.WriteByte('\n')
+	b.WriteString("capture: ")
+	if v.Capture {
+		b.WriteString("true")
+	} else {
+		b.WriteString("false")
+	}
+	b.WriteByte('\n')
+	b.WriteString("capture_empty: ")
+	b.WriteString(strconv.Quote(v.CaptureEmpty))
+	b.WriteByte('\n')
+	b.WriteString("capture_https: ")
+	b.WriteString(strconv.Quote(v.CaptureHTTPS))
+	b.WriteByte('\n')
+	b.WriteString("capture_hosts:")
+	if len(v.CaptureHosts) == 0 {
+		b.WriteString(" []\n")
+	} else {
+		b.WriteByte('\n')
+		for _, host := range v.CaptureHosts {
+			b.WriteString("- ")
+			b.WriteString(strconv.Quote(host))
+			b.WriteByte('\n')
+		}
+	}
 	return []byte(b.String())
 }
 
@@ -244,6 +360,42 @@ func yamlString(n *yaml.Node) (string, error) {
 		return "", errors.New("not a string")
 	}
 	return n.Value, nil
+}
+
+func yamlBool(n *yaml.Node) (bool, error) {
+	if n.Kind != yaml.ScalarNode || n.Tag != "!!bool" || (n.Value != "true" && n.Value != "false") {
+		return false, errors.New("not a bool")
+	}
+	return n.Value == "true", nil
+}
+
+func yamlHostList(n *yaml.Node) ([]string, error) {
+	if n.Kind != yaml.SequenceNode || n.Tag != "!!seq" {
+		return nil, ErrCaptureHosts
+	}
+	hosts := make([]string, 0, len(n.Content))
+	for _, item := range n.Content {
+		s, err := yamlString(item)
+		if err != nil {
+			return nil, ErrCaptureHosts
+		}
+		hosts = append(hosts, strings.TrimSpace(s))
+	}
+	if len(hosts) == 0 {
+		return []string{}, nil
+	}
+	return hosts, nil
+}
+
+func trimHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, strings.TrimSpace(h))
+	}
+	if len(out) == 0 {
+		return []string{}
+	}
+	return out
 }
 
 func yamlInt(n *yaml.Node, bitSize int) (int64, error) {

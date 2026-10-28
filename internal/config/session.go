@@ -86,6 +86,14 @@ func (s *Session) SaveAndApply(next Values, apply func(Applied)) (Applied, error
 		applied.MaxBody = next.MaxBody
 	}
 	s.runtime.Theme = next.Theme
+	s.runtime.Capture = next.Capture
+	s.runtime.CaptureEmpty = next.CaptureEmpty
+	s.runtime.CaptureHTTPS = next.CaptureHTTPS
+	hosts := append([]string{}, next.CaptureHosts...)
+	if len(hosts) == 0 {
+		hosts = []string{}
+	}
+	s.runtime.CaptureHosts = hosts
 	applied.Runtime = s.runtime
 	if apply != nil {
 		apply(applied)

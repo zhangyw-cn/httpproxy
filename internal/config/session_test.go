@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -22,7 +23,7 @@ func TestEffective(t *testing.T) {
 	want := file
 	want.Proxy = "10.0.0.1:1"
 	want.MaxFlows = 30
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v", got)
 	}
 
@@ -30,7 +31,7 @@ func TestEffective(t *testing.T) {
 	want = file
 	want.UI = "10.0.0.1:2"
 	want.MaxBody = 40
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -57,7 +58,7 @@ func TestSession(t *testing.T) {
 		assertConfigFile(t, d, next)
 
 		gotFile, gotRuntime := s.Snapshot()
-		if gotFile != next {
+		if !reflect.DeepEqual(gotFile, next) {
 			t.Fatalf("file %+v", gotFile)
 		}
 		if gotRuntime.Proxy != flagProxy || gotRuntime.UI != file.UI {
@@ -72,7 +73,7 @@ func TestSession(t *testing.T) {
 		if gotRuntime.Theme != next.Theme {
 			t.Fatalf("theme %s", gotRuntime.Theme)
 		}
-		if applied.File != gotFile || applied.Runtime != gotRuntime {
+		if !reflect.DeepEqual(applied.File, gotFile) || !reflect.DeepEqual(applied.Runtime, gotRuntime) {
 			t.Fatalf("applied %+v", applied)
 		}
 	})
@@ -96,7 +97,7 @@ func TestSession(t *testing.T) {
 		assertConfigFile(t, d, next)
 
 		gotFile, gotRuntime := s.Snapshot()
-		if gotFile != next {
+		if !reflect.DeepEqual(gotFile, next) {
 			t.Fatalf("file %+v", gotFile)
 		}
 		if gotRuntime.Proxy != file.Proxy || gotRuntime.UI != file.UI {
@@ -111,7 +112,7 @@ func TestSession(t *testing.T) {
 		if gotRuntime.Theme != next.Theme {
 			t.Fatalf("theme %s", gotRuntime.Theme)
 		}
-		if applied.File != gotFile || applied.Runtime != gotRuntime {
+		if !reflect.DeepEqual(applied.File, gotFile) || !reflect.DeepEqual(applied.Runtime, gotRuntime) {
 			t.Fatalf("applied %+v", applied)
 		}
 	})
@@ -136,7 +137,7 @@ func TestSession(t *testing.T) {
 		assertConfigFile(t, d, next)
 
 		gotFile, gotRuntime := s.Snapshot()
-		if gotFile != next {
+		if !reflect.DeepEqual(gotFile, next) {
 			t.Fatalf("file %+v", gotFile)
 		}
 		if gotRuntime.Proxy != flagProxy || gotRuntime.UI != flagUI {
@@ -151,7 +152,7 @@ func TestSession(t *testing.T) {
 		if gotRuntime.Theme != next.Theme {
 			t.Fatalf("theme %s", gotRuntime.Theme)
 		}
-		if applied.File != gotFile || applied.Runtime != gotRuntime {
+		if !reflect.DeepEqual(applied.File, gotFile) || !reflect.DeepEqual(applied.Runtime, gotRuntime) {
 			t.Fatalf("applied %+v", applied)
 		}
 	})
@@ -175,7 +176,7 @@ func TestSession(t *testing.T) {
 		if !errors.Is(err, ErrTheme) {
 			t.Fatalf("got %v", err)
 		}
-		if applied != (Applied{}) {
+		if !reflect.DeepEqual(applied, Applied{}) {
 			t.Fatalf("applied %+v", applied)
 		}
 		after, err := os.ReadFile(path)
@@ -186,7 +187,7 @@ func TestSession(t *testing.T) {
 			t.Fatalf("bytes %q", after)
 		}
 		gotFile, gotRuntime := s.Snapshot()
-		if gotFile != beforeFile || gotRuntime != beforeRuntime {
+		if !reflect.DeepEqual(gotFile, beforeFile) || !reflect.DeepEqual(gotRuntime, beforeRuntime) {
 			t.Fatalf("file %+v runtime %+v", gotFile, gotRuntime)
 		}
 	})
@@ -260,7 +261,7 @@ func assertConfigFile(t *testing.T, d *Dir, want Values) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("disk %+v", got)
 	}
 }
