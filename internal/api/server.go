@@ -56,6 +56,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.health)
 	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("PUT /api/config", s.putConfig)
+	s.mux.HandleFunc("PUT /api/capture", s.putCapture)
 	s.mux.HandleFunc("GET /api/flows", s.listFlows)
 	s.mux.HandleFunc("GET /api/flows/{id}", s.getFlow)
 	s.mux.HandleFunc("DELETE /api/flows", s.clearFlows)

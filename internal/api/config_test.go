@@ -265,6 +265,57 @@ func TestConfigNilSession(t *testing.T) {
 	assertConfigError(t, res, http.StatusInternalServerError, "无法写入配置")
 }
 
+func TestPutCapture(t *testing.T) {
+	dir, file, err := config.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := config.NewSession(dir, file, config.Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+	st := store.New(file.MaxFlows)
+	px := proxy.New("127.0.0.1:0", nil, file.MaxBody, nil)
+	srv := api.New(st, nil, session, px)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	res := putBody(t, ts.URL+"/api/capture", `{"capture":false}`)
+	var snap struct {
+		File    config.Values `json:"file"`
+		Runtime config.Values `json:"runtime"`
+	}
+	decodeJSON(t, res, &snap)
+	if snap.File.Capture || snap.Runtime.Capture {
+		t.Fatal("capture still on")
+	}
+	if snap.File.Proxy != file.Proxy || snap.File.MaxFlows != file.MaxFlows {
+		t.Fatalf("other fields changed: %+v", snap.File)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir.Path(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(saved, []byte("capture: false")) {
+		t.Fatalf("file: %s", saved)
+	}
+
+	res = putBody(t, ts.URL+"/api/capture", `{"capture":false,"theme":"light"}`)
+	assertConfigError(t, res, http.StatusBadRequest, "配置含有未知字段")
+	res = putBody(t, ts.URL+"/api/capture", `{}`)
+	assertConfigError(t, res, http.StatusBadRequest, "配置缺少字段")
+	res = putBody(t, ts.URL+"/api/capture", `{"capture":"false"}`)
+	assertConfigError(t, res, http.StatusBadRequest, "抓包开关必须是布尔值")
+
+	body := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1000,"max_body":1048576,"theme":"dark","capture":false,"capture_empty":"none","capture_https":"tunnel","capture_hosts":["*"]}`
+	res = putBody(t, ts.URL+"/api/config", body)
+	assertConfigError(t, res, http.StatusBadRequest, "主机规则不合法")
+	after, err := os.ReadFile(filepath.Join(dir.Path(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(saved, after) {
+		t.Fatal("invalid save changed the file")
+	}
+}
+
 func putBody(t *testing.T, url, body string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))

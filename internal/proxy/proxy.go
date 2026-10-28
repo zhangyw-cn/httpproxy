@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"httpproxy/internal/capture"
 	"httpproxy/internal/cert"
 )
 
@@ -33,6 +34,7 @@ type Proxy struct {
 	sink    FlowSink
 	maxBody int64
 	ca      *cert.Manager
+	policy  capture.Policy
 
 	// UpstreamTLS is nil in production so system roots are used. Its
 	// NextProtos are ignored: upstream ALPN always offers h2 and http/1.1.
@@ -64,9 +66,16 @@ func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
 		sink:        sink,
 		maxBody:     maxBody,
 		ca:          ca,
+		policy:      capture.Default(),
 		conns:       make(map[net.Conn]struct{}),
 		recordQueue: defaultRecordQueue,
 	}
+}
+
+func (p *Proxy) SetPolicy(policy capture.Policy) {
+	p.mu.Lock()
+	p.policy = policy
+	p.mu.Unlock()
 }
 
 // SetMaxBody sets the body capture cap for flows that start after this call.
