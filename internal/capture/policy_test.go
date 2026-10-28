@@ -113,6 +113,9 @@ func TestCompileRejectsRules(t *testing.T) {
 		{"all", "decrypt", many, ErrCaptureHostsLimit},
 		{"all", "decrypt", []string{"Example.com", "example.com"}, ErrCaptureHostDup},
 		{"all", "decrypt", []string{"*.A.com", "*.a.com"}, ErrCaptureHostDup},
+		{"all", "decrypt", []string{"example.com:"}, ErrCaptureHost},
+		{"all", "decrypt", []string{"*.example.com:"}, ErrCaptureHost},
+		{"all", "decrypt", []string{"[::1]:"}, ErrCaptureHost},
 	}
 	for _, tc := range cases {
 		_, err := Compile(true, tc.empty, tc.https, tc.hosts)

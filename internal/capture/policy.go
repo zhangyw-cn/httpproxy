@@ -191,7 +191,11 @@ func splitPattern(s string) (string, string, error) {
 		if len(tail) < 2 || tail[0] != ':' {
 			return "", "", ErrCaptureHost
 		}
-		return host, tail[1:], nil
+		port := tail[1:]
+		if port == "" {
+			return "", "", ErrCaptureHost
+		}
+		return host, port, nil
 	}
 	if strings.Count(s, ":") > 1 {
 		return "", "", ErrCaptureHost
@@ -199,6 +203,9 @@ func splitPattern(s string) (string, string, error) {
 	host, port, ok := strings.Cut(s, ":")
 	if !ok {
 		return s, "", nil
+	}
+	if port == "" {
+		return "", "", ErrCaptureHost
 	}
 	return host, port, nil
 }
