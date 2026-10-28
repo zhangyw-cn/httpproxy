@@ -78,6 +78,12 @@ func (p *Proxy) SetPolicy(policy capture.Policy) {
 	p.mu.Unlock()
 }
 
+func (p *Proxy) currentPolicy() capture.Policy {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.policy
+}
+
 // SetMaxBody sets the body capture cap for flows that start after this call.
 // A negative n is stored as 0. A flow already started keeps the limit from startFlow.
 func (p *Proxy) SetMaxBody(n int64) {

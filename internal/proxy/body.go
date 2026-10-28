@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/andybalholm/brotli"
 )
+
+var bodyCaptures atomic.Int64
 
 // bodyCapture is written by the upstream transport goroutine while the
 // handler may read results, so access is serialized.
@@ -23,6 +26,7 @@ type bodyCapture struct {
 }
 
 func newBodyCapture(max int64) *bodyCapture {
+	bodyCaptures.Add(1)
 	if max < 0 {
 		max = 0
 	}

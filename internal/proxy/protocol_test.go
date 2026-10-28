@@ -20,6 +20,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"golang.org/x/net/http2"
 
+	"httpproxy/internal/capture"
 	"httpproxy/internal/cert"
 	"httpproxy/internal/flow"
 )
@@ -346,6 +347,245 @@ func TestDecodeForDisplay(t *testing.T) {
 	}
 	if got := decodeForDisplay([]byte(text), http.Header{}, 1024); got != nil {
 		t.Errorf("identity body produced decoded copy %q", got)
+	}
+}
+
+func TestDecryptOnlyForwardsWithoutCapture(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "hello-body")
+	}))
+	defer upstream.Close()
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, nil)
+	policy, err := capture.Compile(true, "none", "decrypt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	before := bodyCaptures.Load()
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL(t, p))}}
+	res, err := client.Get(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	got, _ := io.ReadAll(res.Body)
+	if string(got) != "hello-body" || res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d body %q", res.StatusCode, got)
+	}
+	if created, updated := sink.counts(); created != 0 || updated != 0 {
+		t.Fatalf("sink created=%d updated=%d", created, updated)
+	}
+	if bodyCaptures.Load() != before {
+		t.Fatal("decrypt-only allocated a body capture")
+	}
+}
+
+func TestTunnelPassesBytesWithoutMITM(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "tunneled")
+	}))
+	defer upstream.Close()
+	manager, _ := newCA(t)
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, manager)
+	policy, err := capture.Compile(true, "all", "tunnel", []string{"example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	target := strings.TrimPrefix(upstream.URL, "https://")
+	conn, err := net.Dial("tcp", p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := io.WriteString(conn, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	status, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status, "200") {
+		t.Fatalf("status %q", status)
+	}
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil || line == "\r\n" {
+			break
+		}
+	}
+	pool := upstream.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	tlsConn := tls.Client(&readerConn{Conn: conn, r: reader}, &tls.Config{RootCAs: pool, ServerName: "127.0.0.1"})
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodGet, upstream.URL+"/", nil)
+	if err := req.Write(tlsConn); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tlsConn), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "tunneled" {
+		t.Fatalf("body %q", body)
+	}
+	if created, _ := sink.counts(); created != 0 {
+		t.Fatalf("tunnel recorded %d flows", created)
+	}
+}
+
+type readerConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *readerConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+func proxyURL(t *testing.T, p *Proxy) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse("http://" + p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+
+func TestTunnelDialFailureSends502Without200(t *testing.T) {
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, nil)
+	policy, err := capture.Compile(false, "all", "tunnel", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	conn, err := net.Dial("tcp", p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	target := closedAddress(t)
+	if _, err := io.WriteString(conn, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway || string(body) != "Bad Gateway\n" {
+		t.Fatalf("status %d body %q", resp.StatusCode, body)
+	}
+	if created, updated := sink.counts(); created != 0 || updated != 0 {
+		t.Fatalf("sink %d %d", created, updated)
+	}
+}
+
+func TestTunnelRejectsSelf(t *testing.T) {
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, nil)
+	policy, err := capture.Compile(false, "all", "tunnel", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	conn, err := net.Dial("tcp", p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	target := p.Addr()
+	if _, err := io.WriteString(conn, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway || string(body) != "refusing to proxy to the proxy's own listen address\n" {
+		t.Fatalf("status %d body %q", resp.StatusCode, body)
+	}
+}
+
+func TestPlainKeepAliveUsesTheNewPolicy(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, nil)
+	conn, err := net.Dial("tcp", p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	send := func() {
+		t.Helper()
+		if _, err := io.WriteString(conn, "GET "+upstream.URL+" HTTP/1.1\r\nHost: upstream\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status %d", resp.StatusCode)
+		}
+	}
+	send()
+	// Recording is asynchronous: OnUpdated lands after the response is written.
+	waitFlowCount(t, sink, 1)
+	if created, updated := sink.counts(); created != 1 || updated != 1 {
+		t.Fatalf("first sink %d %d", created, updated)
+	}
+	policy, err := capture.Compile(false, "all", "decrypt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	send()
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for {
+		if created, updated := sink.counts(); created != 1 || updated != 1 {
+			t.Fatalf("second sink %d %d", created, updated)
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestTLSFailureIsSilentWhenNotRecording(t *testing.T) {
+	manager, _ := newCA(t)
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, manager)
+	policy, err := capture.Compile(false, "all", "decrypt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	_, err = dialMITM(t, p.Addr(), "untrusted.example:443", &tls.Config{
+		RootCAs:    x509.NewCertPool(),
+		ServerName: "untrusted.example",
+	})
+	if err == nil {
+		t.Fatal("client handshake unexpectedly succeeded")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if created, updated := sink.counts(); created != 0 || updated != 0 {
+		t.Fatalf("sink %d %d", created, updated)
 	}
 }
 

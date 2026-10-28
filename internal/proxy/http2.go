@@ -12,16 +12,16 @@ import (
 	"httpproxy/internal/flow"
 )
 
-func (p *Proxy) handleHTTP2(conn *tls.Conn, connectAuthority, upstreamSNI string) {
+func (p *Proxy) handleHTTP2(conn *tls.Conn, connectAuthority, upstreamSNI string, record bool) {
 	server := &http2.Server{}
 	server.ServeConn(conn, &http2.ServeConnOpts{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			p.handleHTTP2Request(w, req, connectAuthority, upstreamSNI)
+			p.handleHTTP2Request(w, req, connectAuthority, upstreamSNI, record)
 		}),
 	})
 }
 
-func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, connectAuthority, upstreamSNI string) {
+func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, connectAuthority, upstreamSNI string, record bool) {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -31,40 +31,50 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	p.mu.Unlock()
 	defer p.handlerWG.Done()
 
-	started := time.Now()
 	clientBody := req.Body
 	if clientBody != nil {
 		defer clientBody.Close()
 	}
 
-	f := flow.Flow{
-		ID:          uuid.NewString(),
-		Scheme:      "https",
-		Method:      req.Method,
-		Host:        connectAuthority,
-		Path:        req.URL.RequestURI(),
-		HTTPVersion: "2",
-		StartedAt:   started,
-		ClientAddr:  req.RemoteAddr,
+	var f flow.Flow
+	var rec *flowRecord
+	var limit int64
+	if record {
+		f = flow.Flow{
+			ID:          uuid.NewString(),
+			Scheme:      "https",
+			Method:      req.Method,
+			Host:        connectAuthority,
+			Path:        req.URL.RequestURI(),
+			HTTPVersion: "2",
+			StartedAt:   time.Now(),
+			ClientAddr:  req.RemoteAddr,
+		}
+		rec, limit = p.startFlow(req, &f)
 	}
-	rec, limit := p.startFlow(req, &f)
 	req.URL.Scheme = "https"
 	req.URL.Host = connectAuthority
 	if p.isLoopbackTarget(req.URL) {
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		p.failUpstream(rec, errSelfProxy)
+		if record {
+			p.failUpstream(rec, errSelfProxy)
+		}
 		return
 	}
 	prepareOutgoing(req, false)
 	resp, err := p.roundTrip(req, upstreamSNI)
 	if err != nil {
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		p.failUpstream(rec, err)
+		if record {
+			p.failUpstream(rec, err)
+		}
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
-	f.StatusCode = resp.StatusCode
-	f.RespHeaders = copyHeaders(resp.Header)
+	if record {
+		f.StatusCode = resp.StatusCode
+		f.RespHeaders = copyHeaders(resp.Header)
+	}
 	removeHopHeaders(resp.Header)
 	for name, values := range resp.Header {
 		for _, value := range values {
@@ -72,6 +82,15 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	if !record {
+		writeErr := copyAndFlush(w, resp.Body)
+		if writeErr != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+		}
+		_ = resp.Body.Close()
+		resp.Body = http.NoBody
+		return
+	}
 	respCapture := newBodyCapture(limit)
 	writeErr := copyAndFlush(w, io.TeeReader(resp.Body, respCapture))
 	if writeErr != nil {

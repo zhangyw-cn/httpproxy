@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"httpproxy/internal/capture"
 	"httpproxy/internal/flow"
 )
 
@@ -60,13 +61,25 @@ func (p *Proxy) handleHTTP1(conn net.Conn) {
 			p.handleConnect(&bufferedConn{Conn: conn, r: reader}, req)
 			return
 		}
-		if !p.handleRequest(conn, req, "http", "", "") {
+		record := p.currentPolicy().Decide(false, req.Host) == capture.Record
+		if !p.handleRequest(conn, req, "http", "", "", record) {
 			return
 		}
 	}
 }
 
 func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
+	connectAuthority := connectReq.URL.Host
+	if connectAuthority == "" {
+		connectAuthority = connectReq.Host
+	}
+	action := p.currentPolicy().Decide(true, connectAuthority)
+	if action == capture.Tunnel {
+		p.spliceTunnel(conn, connectAuthority)
+		return
+	}
+	record := action == capture.Record
+
 	if p.ca == nil {
 		writeResponse(conn, http.StatusBadGateway, "HTTPS interception requires a CA\n")
 		return
@@ -75,10 +88,6 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 		return
 	}
 
-	connectAuthority := connectReq.URL.Host
-	if connectAuthority == "" {
-		connectAuthority = connectReq.Host
-	}
 	connectHost := hostWithoutPort(connectAuthority)
 	if connectHost == "" {
 		connectHost = hostWithoutPort(connectReq.Host)
@@ -101,14 +110,14 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 	started := time.Now()
 	_ = conn.SetDeadline(started.Add(tlsHandshakeTimeout))
 	if err := tlsConn.Handshake(); err != nil {
-		if !errors.Is(err, io.EOF) {
+		if record && !errors.Is(err, io.EOF) {
 			p.recordTLSFailure(conn, connectAuthority, started, err)
 		}
 		return
 	}
 	_ = conn.SetDeadline(time.Time{})
 	if tlsConn.ConnectionState().NegotiatedProtocol == "h2" {
-		p.handleHTTP2(tlsConn, connectAuthority, clientSNI)
+		p.handleHTTP2(tlsConn, connectAuthority, clientSNI, record)
 		return
 	}
 
@@ -120,10 +129,44 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 			return
 		}
 		_ = tlsConn.SetReadDeadline(time.Time{})
-		if !p.handleRequest(tlsConn, req, "https", connectAuthority, clientSNI) {
+		if !p.handleRequest(tlsConn, req, "https", connectAuthority, clientSNI, record) {
 			return
 		}
 	}
+}
+
+func (p *Proxy) spliceTunnel(conn net.Conn, authority string) {
+	if _, _, err := net.SplitHostPort(authority); err != nil {
+		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
+		return
+	}
+	if p.isLoopbackTarget(&url.URL{Host: authority}) {
+		writeResponse(conn, http.StatusBadGateway, "refusing to proxy to the proxy's own listen address\n")
+		return
+	}
+	upstream, err := (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).Dial("tcp", authority)
+	if err != nil {
+		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
+		return
+	}
+	if _, err := io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		_ = upstream.Close()
+		return
+	}
+	_ = conn.SetDeadline(time.Time{})
+	_ = upstream.SetDeadline(time.Time{})
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(upstream, conn)
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(conn, upstream)
+		done <- struct{}{}
+	}()
+	<-done
+	_ = upstream.Close()
+	_ = conn.Close()
 }
 
 // recordTLSFailure surfaces a failed MITM handshake (typically an untrusted
@@ -143,8 +186,7 @@ func (p *Proxy) recordTLSFailure(conn net.Conn, authority string, started time.T
 	p.finishRecord(rec, nil, nil)
 }
 
-func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultHost, upstreamSNI string) bool {
-	started := time.Now()
+func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultHost, upstreamSNI string, record bool) bool {
 	clientBody := req.Body
 	defer clientBody.Close()
 	clientClose := req.Close
@@ -154,17 +196,22 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	if host == "" {
 		host = req.Host
 	}
-	f := flow.Flow{
-		ID:          uuid.NewString(),
-		Scheme:      scheme,
-		Method:      req.Method,
-		Host:        host,
-		Path:        req.URL.RequestURI(),
-		HTTPVersion: fmt.Sprintf("%d.%d", req.ProtoMajor, req.ProtoMinor),
-		StartedAt:   started,
-		ClientAddr:  conn.RemoteAddr().String(),
+	var f flow.Flow
+	var rec *flowRecord
+	var limit int64
+	if record {
+		f = flow.Flow{
+			ID:          uuid.NewString(),
+			Scheme:      scheme,
+			Method:      req.Method,
+			Host:        host,
+			Path:        req.URL.RequestURI(),
+			HTTPVersion: fmt.Sprintf("%d.%d", req.ProtoMajor, req.ProtoMinor),
+			StartedAt:   time.Now(),
+			ClientAddr:  conn.RemoteAddr().String(),
+		}
+		rec, limit = p.startFlow(req, &f)
 	}
-	rec, limit := p.startFlow(req, &f)
 	if defaultHost != "" {
 		req.URL.Scheme = scheme
 		req.URL.Host = defaultHost
@@ -176,36 +223,49 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	}
 	if p.isLoopbackTarget(req.URL) {
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
-		p.failUpstream(rec, errSelfProxy)
+		if record {
+			p.failUpstream(rec, errSelfProxy)
+		}
 		return false
 	}
 	prepareOutgoing(req, websocket)
 	resp, err := p.roundTrip(req, upstreamSNI)
 	if err != nil {
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
-		p.failUpstream(rec, err)
+		if record {
+			p.failUpstream(rec, err)
+		}
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	f.StatusCode = resp.StatusCode
-	f.RespHeaders = copyHeaders(resp.Header)
+	if record {
+		f.StatusCode = resp.StatusCode
+		f.RespHeaders = copyHeaders(resp.Header)
+	}
 	if websocket && resp.StatusCode == http.StatusSwitchingProtocols {
 		return p.tunnelWebSocket(conn, req, resp, &f, rec)
 	}
-	respCapture := newBodyCapture(limit)
-	resp.Body = struct {
-		io.Reader
-		io.Closer
-	}{Reader: io.TeeReader(resp.Body, respCapture), Closer: resp.Body}
+	var respCapture *bodyCapture
+	if record {
+		respCapture = newBodyCapture(limit)
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{Reader: io.TeeReader(resp.Body, respCapture), Closer: resp.Body}
+	}
 	closeAfter := normalizeForHTTP1Client(resp, req, clientClose)
 	writeErr := resp.Write(conn)
 	if writeErr != nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		f.Error = writeErr.Error()
+		if record {
+			f.Error = writeErr.Error()
+		}
 	}
 	_ = resp.Body.Close()
 	resp.Body = http.NoBody
-	p.finishRecord(rec, resp.Header, respCapture)
+	if record {
+		p.finishRecord(rec, resp.Header, respCapture)
+	}
 	return writeErr == nil && !closeAfter
 }
 
@@ -219,7 +279,9 @@ func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Res
 	if !ok {
 		_ = resp.Body.Close()
 		resp.Body = http.NoBody
-		f.Error = "websocket upgrade: upstream body is not duplex"
+		if rec != nil {
+			rec.f.Error = "websocket upgrade: upstream body is not duplex"
+		}
 		p.finishRecord(rec, nil, nil)
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
 		return false
@@ -227,7 +289,9 @@ func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Res
 	resp.Body = http.NoBody
 	if err := resp.Write(conn); err != nil {
 		_ = upstreamConn.Close()
-		f.Error = err.Error()
+		if rec != nil {
+			rec.f.Error = err.Error()
+		}
 		p.finishRecord(rec, nil, nil)
 		return false
 	}
@@ -289,6 +353,9 @@ func (p *Proxy) startFlow(req *http.Request, f *flow.Flow) (*flowRecord, int64) 
 }
 
 func (p *Proxy) failUpstream(rec *flowRecord, err error) {
+	if rec == nil {
+		return
+	}
 	rec.f.StatusCode = http.StatusBadGateway
 	rec.f.Error = err.Error()
 	p.finishRecord(rec, nil, nil)

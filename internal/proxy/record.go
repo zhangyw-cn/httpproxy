@@ -95,6 +95,9 @@ func (p *Proxy) beginRecord(f *flow.Flow, reqCap *bodyCapture, limit, reqLen int
 }
 
 func (p *Proxy) finishRecord(rec *flowRecord, respHeader http.Header, respCap *bodyCapture) {
+	if rec == nil {
+		return
+	}
 	finishFlow(rec.f, rec.f.StartedAt)
 	job := recordJob{
 		f:          *rec.f,
