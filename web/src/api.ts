@@ -25,6 +25,25 @@ export async function putConfig(file: ConfigValues): Promise<ConfigSnapshot> {
   return r.json()
 }
 
+export async function putCapture(capture: boolean): Promise<ConfigSnapshot> {
+  const r = await fetch('/api/capture', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ capture }),
+  })
+  if (!r.ok) {
+    let message = '无法写入配置'
+    try {
+      const body: { error?: unknown } = await r.json()
+      if (typeof body.error === 'string') message = body.error
+    } catch {
+      /* body has no error string */
+    }
+    throw new Error(message)
+  }
+  return r.json()
+}
+
 export async function listFlows(params: Partial<Filters>): Promise<FlowSummary[]> {
   const q = new URLSearchParams()
   if (params.host) q.set('host', params.host)

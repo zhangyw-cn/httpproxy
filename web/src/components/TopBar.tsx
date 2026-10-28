@@ -2,9 +2,13 @@ interface Props {
   onClear: () => void
   count: number
   proxy: string
+  capture: boolean | null
+  disabled: boolean
+  error: string
+  onToggle: () => void
 }
 
-export default function TopBar({ onClear, count, proxy }: Props) {
+export default function TopBar({ onClear, count, proxy, capture, disabled, error, onToggle }: Props) {
   return (
     <header className="topbar">
       <span className="topbar-title">httpproxy</span>
@@ -13,6 +17,10 @@ export default function TopBar({ onClear, count, proxy }: Props) {
       </span>
       <span className="topbar-spacer" />
       <span className="topbar-count">{count} 条请求</span>
+      <button className="btn" type="button" disabled={disabled || capture == null} onClick={onToggle}>
+        {capture ? '暂停抓包' : '开始抓包'}
+      </button>
+      {error ? <span className="topbar-error">{error}</span> : null}
       <a className="btn" href="/api/ca.crt" download="httpproxy-ca.crt">
         下载 CA
       </a>

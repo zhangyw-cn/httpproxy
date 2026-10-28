@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows } from './api'
+import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows, putCapture } from './api'
+import { captureSummary } from './capture'
 import { loadVisible, normalizeVisible, saveVisible } from './columns'
 import ActivityBar from './components/ActivityBar'
 import ColumnPicker from './components/ColumnPicker'
@@ -44,6 +45,9 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<ConfigSnapshot | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [view, setView] = useState<'capture' | 'settings'>('capture')
+  const writing = useRef(false)
+  const [writeLocked, setWriteLocked] = useState(false)
+  const [toggleError, setToggleError] = useState('')
   const maxFlows = snapshot?.runtime.max_flows ?? 1000
   const filtersRef = useRef(filters)
   const maxFlowsRef = useRef(maxFlows)
@@ -147,15 +151,58 @@ export default function App() {
     setSelectedId(null)
   }
 
+  const beginWrite = (): boolean => {
+    if (writing.current) return false
+    writing.current = true
+    setWriteLocked(true)
+    return true
+  }
+
+  const endWrite = () => {
+    writing.current = false
+    setWriteLocked(false)
+  }
+
+  const onToggle = async () => {
+    if (!beginWrite()) return
+    try {
+      const next = await putCapture(!(snapshot?.file.capture ?? false))
+      setToggleError('')
+      onSaved(next)
+    } catch (err) {
+      setToggleError(err instanceof Error ? err.message : '无法写入配置')
+    } finally {
+      endWrite()
+    }
+  }
+
+  const summary = captureSummary(snapshot?.file ?? null)
+
   return (
     <div className="app">
-      <TopBar onClear={onClear} count={flows.length} proxy={snapshot?.runtime.proxy ?? ''} />
+      <TopBar
+        onClear={onClear}
+        count={flows.length}
+        proxy={snapshot?.runtime.proxy ?? ''}
+        capture={snapshot ? snapshot.file.capture : null}
+        disabled={writeLocked}
+        error={toggleError}
+        onToggle={() => void onToggle()}
+      />
       <div className="shell">
         <ActivityBar
           open={view === 'settings'}
           onToggle={() => setView((current) => (current === 'settings' ? 'capture' : 'settings'))}
         />
-        <SettingsPane snapshot={snapshot} loadError={loadError} open={view === 'settings'} onSaved={onSaved} />
+        <SettingsPane
+          snapshot={snapshot}
+          loadError={loadError}
+          open={view === 'settings'}
+          onSaved={onSaved}
+          writeLocked={writeLocked}
+          beginWrite={beginWrite}
+          endWrite={endWrite}
+        />
         {view === 'capture' ? (
           <div className="capture">
             <div className="filterbar">
@@ -164,6 +211,9 @@ export default function App() {
               </div>
               <ColumnPicker visible={visible} onChange={onVisible} />
             </div>
+            <p className="capture-summary" title={summary.title}>
+              {summary.text}
+            </p>
             <main className="workspace">
               <div className="pane pane-top">
                 <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} visible={visible} />

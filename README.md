@@ -61,7 +61,8 @@ read `~/.httpproxy`.
 `.gitignore` is written as `*` only when that file is absent. An existing
 `.gitignore` is left unchanged. `ca.key` is mode `0600`. A new `config.yaml`
 uses `proxy: 127.0.0.1:8080`, `ui: 127.0.0.1:8081`, `max_flows: 1000`,
-`max_body: 1048576`, and `theme: dark`.
+`max_body: 1048576`, `theme: dark`, `capture: true`, `capture_empty: all`,
+`capture_https: decrypt`, and `capture_hosts: []`.
 
 Point the HTTP and HTTPS proxy settings of your browser, application, or
 operating system to `127.0.0.1:8080`, then open the UI. Applications that do

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { putConfig } from '../api'
+import { capturePayload } from '../capture'
 import { limitNote } from '../settings'
 import type { ConfigSnapshot } from '../types'
 
@@ -8,17 +9,22 @@ interface Props {
   loadError: boolean
   open: boolean
   onSaved: (snapshot: ConfigSnapshot) => void
+  writeLocked: boolean
+  beginWrite: () => boolean
+  endWrite: () => void
 }
 
-export default function SettingsPane({ snapshot, loadError, open, onSaved }: Props) {
+export default function SettingsPane({ snapshot, loadError, open, onSaved, writeLocked, beginWrite, endWrite }: Props) {
   const [proxy, setProxy] = useState(snapshot?.file.proxy ?? '')
   const [ui, setUi] = useState(snapshot?.file.ui ?? '')
   const [theme, setTheme] = useState(snapshot?.file.theme ?? 'dark')
   const [maxFlows, setMaxFlows] = useState(snapshot ? String(snapshot.file.max_flows) : '')
   const [maxBody, setMaxBody] = useState(snapshot ? String(snapshot.file.max_body) : '')
+  const [empty, setEmpty] = useState<'all' | 'none'>(snapshot?.file.capture_empty ?? 'all')
+  const [httpsMode, setHttpsMode] = useState<'decrypt' | 'tunnel'>(snapshot?.file.capture_https ?? 'decrypt')
+  const [hostsText, setHostsText] = useState(snapshot?.file.capture_hosts.join('\n') ?? '')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
-  const savingRef = useRef(false)
 
   useEffect(() => {
     if (!snapshot) return
@@ -28,6 +34,16 @@ export default function SettingsPane({ snapshot, loadError, open, onSaved }: Pro
     setMaxFlows(String(snapshot.file.max_flows))
     setMaxBody(String(snapshot.file.max_body))
   }, [snapshot?.file.proxy, snapshot?.file.ui, snapshot?.file.max_flows, snapshot?.file.max_body, snapshot?.file.theme])
+
+  const emptyFromFile = snapshot?.file.capture_empty
+  const httpsFromFile = snapshot?.file.capture_https
+  const hostsKey = snapshot?.file.capture_hosts.join('\n')
+  useEffect(() => {
+    if (emptyFromFile == null || httpsFromFile == null || hostsKey == null) return
+    setEmpty(emptyFromFile)
+    setHttpsMode(httpsFromFile)
+    setHostsText(hostsKey)
+  }, [emptyFromFile, httpsFromFile, hostsKey])
 
   if (snapshot == null) {
     return (
@@ -42,23 +58,26 @@ export default function SettingsPane({ snapshot, loadError, open, onSaved }: Pro
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (savingRef.current) return
-    savingRef.current = true
+    if (!beginWrite()) return
     setSaving(true)
     setSaveError('')
     try {
-      const next = await putConfig({
+      const next = await putConfig(capturePayload({
+        ...snapshot.file,
         proxy,
         ui,
         max_flows: Number(maxFlows),
         max_body: Number(maxBody),
         theme,
-      })
+      }, empty, httpsMode, hostsText))
+      setEmpty(next.file.capture_empty)
+      setHttpsMode(next.file.capture_https)
+      setHostsText(next.file.capture_hosts.join('\n'))
       onSaved(next)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : '无法写入配置')
     } finally {
-      savingRef.current = false
+      endWrite()
       setSaving(false)
     }
   }
@@ -132,8 +151,61 @@ export default function SettingsPane({ snapshot, loadError, open, onSaved }: Pro
         {bodyNote ? <span className="settings-note">{bodyNote}</span> : null}
       </div>
       <div className="settings-row">
+        <span className="settings-label">空规则</span>
+        <button
+          type="button"
+          className={empty === 'all' ? 'btn seg-btn active' : 'btn seg-btn'}
+          disabled={saving}
+          onClick={() => setEmpty('all')}
+        >
+          抓全部
+        </button>
+        <button
+          type="button"
+          className={empty === 'none' ? 'btn seg-btn active' : 'btn seg-btn'}
+          disabled={saving}
+          onClick={() => setEmpty('none')}
+        >
+          不抓
+        </button>
+      </div>
+      <div className="settings-row">
+        <span className="settings-label">未抓 HTTPS</span>
+        <button
+          type="button"
+          className={httpsMode === 'decrypt' ? 'btn seg-btn active' : 'btn seg-btn'}
+          disabled={saving}
+          onClick={() => setHttpsMode('decrypt')}
+        >
+          解密
+        </button>
+        <button
+          type="button"
+          className={httpsMode === 'tunnel' ? 'btn seg-btn active' : 'btn seg-btn'}
+          disabled={saving}
+          onClick={() => setHttpsMode('tunnel')}
+        >
+          隧道
+        </button>
+      </div>
+      <div className="settings-row settings-row-hosts">
+        <label className="settings-label" htmlFor="settings-hosts">主机规则</label>
+        <div className="settings-hosts-field">
+          <textarea
+            id="settings-hosts"
+            className="input settings-hosts"
+            disabled={saving}
+            rows={3}
+            value={hostsText}
+            placeholder={'example.com\n*.example.com\nexample.com:8443'}
+            onChange={(event) => setHostsText(event.target.value)}
+          />
+          <span className="settings-note">保存后立即生效</span>
+        </div>
+      </div>
+      <div className="settings-row">
         <span className="settings-label" />
-        <button className="btn" type="submit" disabled={saving}>保存</button>
+        <button className="btn" type="submit" disabled={saving || writeLocked}>保存</button>
         {saveError ? <p className="settings-error">{saveError}</p> : null}
       </div>
     </form>
