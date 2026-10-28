@@ -91,9 +91,7 @@ func (s *Server) putCapture(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, config.ErrCapture)
 		return
 	}
-	file, _ := s.session.Snapshot()
-	file.Capture = captureOn
-	applied, err := s.session.SaveAndApply(file, s.applySaved)
+	applied, err := s.session.SetCapture(captureOn, s.applySaved)
 	if err != nil {
 		writeConfigError(w, err)
 		return

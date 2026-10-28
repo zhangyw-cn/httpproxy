@@ -68,7 +68,24 @@ func (s *Session) Save(next Values) (Applied, error) {
 func (s *Session) SaveAndApply(next Values, apply func(Applied)) (Applied, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveLocked(next, apply)
+}
 
+// SetCapture changes only Capture. It copies the current file while holding
+// the session lock, then writes that copy, so a settings save cannot land
+// between the read and the write.
+func (s *Session) SetCapture(on bool, apply func(Applied)) (Applied, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next := s.file
+	next.Capture = on
+	next.CaptureHosts = cloneHosts(s.file.CaptureHosts)
+	return s.saveLocked(next, apply)
+}
+
+// saveLocked writes next. The caller holds s.mu.
+func (s *Session) saveLocked(next Values, apply func(Applied)) (Applied, error) {
 	if err := s.dir.Save(next); err != nil {
 		return Applied{}, err
 	}
@@ -89,14 +106,18 @@ func (s *Session) SaveAndApply(next Values, apply func(Applied)) (Applied, error
 	s.runtime.Capture = next.Capture
 	s.runtime.CaptureEmpty = next.CaptureEmpty
 	s.runtime.CaptureHTTPS = next.CaptureHTTPS
-	hosts := append([]string{}, next.CaptureHosts...)
-	if len(hosts) == 0 {
-		hosts = []string{}
-	}
-	s.runtime.CaptureHosts = hosts
+	s.runtime.CaptureHosts = cloneHosts(next.CaptureHosts)
 	applied.Runtime = s.runtime
 	if apply != nil {
 		apply(applied)
 	}
 	return applied, nil
+}
+
+func cloneHosts(hosts []string) []string {
+	cloned := append([]string{}, hosts...)
+	if len(cloned) == 0 {
+		return []string{}
+	}
+	return cloned
 }

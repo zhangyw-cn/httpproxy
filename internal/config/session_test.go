@@ -313,6 +313,57 @@ func TestSaveAndApplyBlocksASecondSave(t *testing.T) {
 	}
 }
 
+func TestSetCaptureWaitsForABlockingSave(t *testing.T) {
+	d, file, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewSession(d, file, Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+	first := savedValues(file)
+	first.CaptureHosts = []string{"new.example"}
+	wantCapture := !first.Capture
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		_, err := s.SaveAndApply(first, func(Applied) {
+			close(started)
+			<-release
+		})
+		if err != nil {
+			t.Errorf("first save: %v", err)
+		}
+	}()
+	<-started
+
+	done := make(chan struct{})
+	go func() {
+		if _, err := s.SetCapture(wantCapture, nil); err != nil {
+			t.Errorf("set capture: %v", err)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("capture save ran while the first apply still held the lock")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("capture save did not finish after the first apply released the lock")
+	}
+	gotFile, gotRuntime := s.Snapshot()
+	wantHosts := []string{"new.example"}
+	if !reflect.DeepEqual(gotFile.CaptureHosts, wantHosts) || !reflect.DeepEqual(gotRuntime.CaptureHosts, wantHosts) {
+		t.Fatalf("file hosts %+v runtime hosts %+v", gotFile.CaptureHosts, gotRuntime.CaptureHosts)
+	}
+	if gotFile.Capture != wantCapture || gotRuntime.Capture != wantCapture {
+		t.Fatalf("file capture %v runtime capture %v", gotFile.Capture, gotRuntime.Capture)
+	}
+}
+
 func savedValues(file Values) Values {
 	next := file
 	next.Proxy = "127.0.0.1:9090"
