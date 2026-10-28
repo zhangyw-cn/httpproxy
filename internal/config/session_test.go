@@ -157,6 +157,78 @@ func TestSession(t *testing.T) {
 		}
 	})
 
+	t.Run("persists capture fields to disk and runtime", func(t *testing.T) {
+		d, file, err := Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := NewSession(d, file, Overrides{}, flagProxy, flagUI, flagFlows, flagBody)
+
+		next := file
+		next.Capture = false
+		next.CaptureEmpty = "none"
+		next.CaptureHTTPS = "tunnel"
+		next.CaptureHosts = []string{"Example.com"}
+		next.Theme = "light"
+
+		wantCapture := Values{
+			Capture:      false,
+			CaptureEmpty: "none",
+			CaptureHTTPS: "tunnel",
+			CaptureHosts: []string{"Example.com"},
+		}
+
+		if _, err := s.Save(next); err != nil {
+			t.Fatal(err)
+		}
+
+		gotFile, gotRuntime := s.Snapshot()
+		for _, label := range []struct {
+			name string
+			got  Values
+		}{
+			{"file", gotFile},
+			{"runtime", gotRuntime},
+		} {
+			got := Values{
+				Capture:      label.got.Capture,
+				CaptureEmpty: label.got.CaptureEmpty,
+				CaptureHTTPS: label.got.CaptureHTTPS,
+				CaptureHosts: label.got.CaptureHosts,
+			}
+			if !reflect.DeepEqual(got, wantCapture) {
+				t.Fatalf("%s capture %+v", label.name, got)
+			}
+			if label.got.CaptureHosts == nil {
+				t.Fatalf("%s CaptureHosts nil", label.name)
+			}
+		}
+		if gotFile.Theme != next.Theme {
+			t.Fatalf("file theme %s", gotFile.Theme)
+		}
+
+		cfg, err := os.ReadFile(filepath.Join(d.Path(), "config.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fromDisk, err := ParseYAML(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotDisk := Values{
+			Capture:      fromDisk.Capture,
+			CaptureEmpty: fromDisk.CaptureEmpty,
+			CaptureHTTPS: fromDisk.CaptureHTTPS,
+			CaptureHosts: fromDisk.CaptureHosts,
+		}
+		if !reflect.DeepEqual(gotDisk, wantCapture) {
+			t.Fatalf("disk capture %+v", gotDisk)
+		}
+		if fromDisk.CaptureHosts == nil {
+			t.Fatal("disk CaptureHosts nil")
+		}
+	})
+
 	t.Run("rejects illegal theme", func(t *testing.T) {
 		d, file, err := Open(t.TempDir())
 		if err != nil {
