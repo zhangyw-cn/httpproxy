@@ -25,7 +25,8 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
-		return
+		// A normal return makes http2 write an implicit 200.
+		panic(http.ErrAbortHandler)
 	}
 	p.handlerWG.Add(1)
 	p.mu.Unlock()

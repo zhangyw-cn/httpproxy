@@ -582,3 +582,15 @@ func TestCloseWaitsForHTTP2Stream(t *testing.T) {
 		t.Fatal("client Get did not return after Close")
 	}
 }
+
+func TestClosedHTTP2RequestAborts(t *testing.T) {
+	p := New("127.0.0.1:0", &memSink{}, 1024, nil)
+	p.closed = true
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler {
+			t.Fatalf("recover = %v, want http.ErrAbortHandler", got)
+		}
+	}()
+	p.handleHTTP2Request(nil, &http.Request{}, "127.0.0.1:1", "", false)
+	t.Fatal("handler returned")
+}
