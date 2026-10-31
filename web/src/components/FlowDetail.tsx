@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { statusCell } from '../columns'
+import { displayBody, headersCopyText, queryParams } from '../detailView'
 import type { Flow, Header } from '../types'
 import { formatSize } from './FlowTable'
 
 type Tab = 'headers' | 'request' | 'response'
+type BodyMode = 'pretty' | 'raw'
 
 const TAB_LABEL: Record<Tab, string> = {
   headers: '标头',
@@ -26,31 +29,18 @@ function decodeBase64(b64?: string): string {
   }
 }
 
-export function prettyBody(text: string, headers: Header[] | null): string {
-  if (!text) return ''
-  const ct = headers?.find((h) => h.name.toLowerCase() === 'content-type')?.value.toLowerCase() ?? ''
-  const trimmed = text.trim()
-  if (ct.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      return JSON.stringify(JSON.parse(trimmed), null, 2)
-    } catch {
-      /* not JSON, fall through */
-    }
-  }
-  return text
-}
-
 function HeaderList({ title, headers }: { title: string; headers: Header[] | null }) {
+  const list = headers ?? []
   return (
     <section className="hdr-section">
       <h4>
-        {title} <span className="muted">({headers?.length ?? 0})</span>
+        {title} <span className="muted">({list.length})</span>
       </h4>
       <dl className="hdr-list">
-        {(headers ?? []).map((h, i) => (
-          <div key={i} className="hdr-row">
-            <dt>{h.name}:</dt>
-            <dd>{h.value}</dd>
+        {list.map((header, index) => (
+          <div key={index} className="hdr-row">
+            <dt>{header.name}:</dt>
+            <dd>{header.value}</dd>
           </div>
         ))}
       </dl>
@@ -74,25 +64,117 @@ function Body({ text, truncated, size }: { text: string; truncated: boolean; siz
 
 export default function FlowDetail({ flow, loading }: Props) {
   const [tab, setTab] = useState<Tab>('headers')
+  const [mode, setMode] = useState<BodyMode>('pretty')
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState(false)
+  const copyTimer = useRef<number | null>(null)
 
-  const req = useMemo(
-    () => (flow ? prettyBody(decodeBase64(flow.req_body), flow.req_headers) : ''),
+  const clearCopyTimer = () => {
+    if (copyTimer.current == null) return
+    window.clearTimeout(copyTimer.current)
+    copyTimer.current = null
+  }
+
+  useEffect(() => () => clearCopyTimer(), [])
+
+  useEffect(() => {
+    setCopied(false)
+    setCopyError(false)
+    clearCopyTimer()
+  }, [tab])
+
+  const params = useMemo(() => (flow ? queryParams(flow.path) : []), [flow])
+  const reqDecoded = useMemo(() => (flow ? decodeBase64(flow.req_body) : ''), [flow])
+  const respDecoded = useMemo(
+    () => (flow ? decodeBase64(flow.resp_body_decoded || flow.resp_body) : ''),
     [flow],
   )
-  const resp = useMemo(
-    () =>
-      flow ? prettyBody(decodeBase64(flow.resp_body_decoded || flow.resp_body), flow.resp_headers) : '',
-    [flow],
+  const reqText = useMemo(
+    () => displayBody(reqDecoded, flow?.req_headers ?? null, mode),
+    [reqDecoded, flow, mode],
   )
+  const respText = useMemo(
+    () => displayBody(respDecoded, flow?.resp_headers ?? null, mode),
+    [respDecoded, flow, mode],
+  )
+  const status = flow ? statusCell(flow) : null
+  const bodyText = tab === 'request' ? reqText : respText
+  const copyDisabled = !flow || (tab !== 'headers' && bodyText === '')
+
+  const onCopy = async () => {
+    if (!flow || !status || copyDisabled) return
+    const text =
+      tab === 'headers'
+        ? headersCopyText({
+            url: `${flow.scheme}://${flow.host}${flow.path}`,
+            method: flow.method,
+            status: status.text,
+            version: flow.http_version,
+            client: flow.client_addr,
+            error: flow.error,
+            query: params,
+            respHeaders: flow.resp_headers,
+            reqHeaders: flow.req_headers,
+          })
+        : bodyText
+    const write = navigator.clipboard?.writeText
+    if (!write) {
+      setCopied(false)
+      setCopyError(true)
+      return
+    }
+    try {
+      await write.call(navigator.clipboard, text)
+      setCopyError(false)
+      setCopied(true)
+      clearCopyTimer()
+      copyTimer.current = window.setTimeout(() => {
+        setCopied(false)
+        copyTimer.current = null
+      }, 1500)
+    } catch {
+      clearCopyTimer()
+      setCopied(false)
+      setCopyError(true)
+    }
+  }
 
   return (
     <div className="detail">
       <div className="tabs">
-        {(['headers', 'request', 'response'] as Tab[]).map((t) => (
-          <button key={t} className={`tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-            {TAB_LABEL[t]}
+        <div className="tabs-main">
+          {(['headers', 'request', 'response'] as Tab[]).map((item) => (
+            <button key={item} className={`tab${tab === item ? ' active' : ''}`} onClick={() => setTab(item)}>
+              {TAB_LABEL[item]}
+            </button>
+          ))}
+        </div>
+        <div className="tabs-actions">
+          {tab !== 'headers' ? (
+            <>
+              <button
+                type="button"
+                className={mode === 'pretty' ? 'btn seg-btn active' : 'btn seg-btn'}
+                aria-pressed={mode === 'pretty'}
+                onClick={() => setMode('pretty')}
+              >
+                美化
+              </button>
+              <button
+                type="button"
+                className={mode === 'raw' ? 'btn seg-btn active' : 'btn seg-btn'}
+                aria-pressed={mode === 'raw'}
+                onClick={() => setMode('raw')}
+              >
+                原始
+              </button>
+            </>
+          ) : null}
+          <button type="button" className="btn" disabled={copyDisabled} onClick={() => void onCopy()}>
+            {copied ? '已复制' : '复制'}
           </button>
-        ))}
+          {copyError ? <span className="copy-error">无法复制</span> : null}
+        </div>
       </div>
       <div className="detail-body">
         {!flow ? (
@@ -106,7 +188,7 @@ export default function FlowDetail({ flow, loading }: Props) {
                 <div className="hdr-row"><dt>请求方法：</dt><dd>{flow.method}</dd></div>
                 <div className="hdr-row">
                   <dt>状态码：</dt>
-                  <dd>{flow.status_code || (flow.error ? '(失败)' : '(等待)')}</dd>
+                  <dd className={status?.statusClass}>{status?.text}</dd>
                 </div>
                 <div className="hdr-row"><dt>协议：</dt><dd>{flow.http_version}</dd></div>
                 <div className="hdr-row"><dt>远程地址：</dt><dd>{flow.client_addr}</dd></div>
@@ -115,13 +197,28 @@ export default function FlowDetail({ flow, loading }: Props) {
                 )}
               </dl>
             </section>
+            <section className="hdr-section">
+              <h4>查询参数</h4>
+              {params.length === 0 ? (
+                <div className="hdr-list muted">(无)</div>
+              ) : (
+                <dl className="hdr-list">
+                  {params.map((item, index) => (
+                    <div key={index} className="hdr-row">
+                      <dt>{item.name}:</dt>
+                      <dd>{item.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </section>
             <HeaderList title="响应标头" headers={flow.resp_headers} />
             <HeaderList title="请求标头" headers={flow.req_headers} />
           </>
         ) : tab === 'request' ? (
-          <Body text={req} truncated={flow.req_truncated} size={flow.req_size} />
+          <Body text={reqText} truncated={flow.req_truncated} size={flow.req_size} />
         ) : (
-          <Body text={resp} truncated={flow.resp_truncated} size={flow.resp_size} />
+          <Body text={respText} truncated={flow.resp_truncated} size={flow.resp_size} />
         )}
       </div>
     </div>

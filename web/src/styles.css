@@ -160,6 +160,7 @@ code, pre { font-family: var(--mono); }
 .st-err { color: var(--danger); }
 .st-redirect { color: var(--warn); }
 .st-pending { color: var(--text-muted); }
+.st-ok { color: var(--ok); }
 
 /* Detail */
 .detail { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -167,6 +168,10 @@ code, pre { font-family: var(--mono); }
   display: flex; flex: none; height: 26px;
   background: var(--bg-subtle); border-bottom: 1px solid var(--border);
 }
+.tabs { align-items: center; height: auto; min-height: 28px; flex-wrap: nowrap; }
+.tabs-main { display: flex; min-width: 0; }
+.tabs-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; padding-right: 4px; }
+.copy-error { color: var(--danger); }
 .tab {
   padding: 0 14px; font: inherit; color: var(--text-muted);
   background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer;

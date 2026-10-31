@@ -94,7 +94,7 @@ function titled(text: string): FlowCell {
   return text ? { text, title: text } : { text }
 }
 
-function statusCell(flow: CellFlow): FlowCell {
+export function statusCell(flow: CellFlow): FlowCell {
   if (flow.error) return { text: '(失败)', statusClass: 'st-err' }
   if (!flow.status_code) return { text: '(等待)', statusClass: 'st-pending' }
   const hundred = Math.floor(flow.status_code / 100)
