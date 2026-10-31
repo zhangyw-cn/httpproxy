@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows, putCapture } from './api'
-import { captureSummary } from './capture'
+import RulesMark from './components/RulesMark'
 import { loadVisible, normalizeVisible, saveVisible } from './columns'
 import ActivityBar from './components/ActivityBar'
 import ColumnPicker from './components/ColumnPicker'
@@ -176,8 +176,6 @@ export default function App() {
     }
   }
 
-  const summary = captureSummary(snapshot?.file ?? null, loadError)
-
   return (
     <div className="app">
       <TopBar
@@ -209,11 +207,9 @@ export default function App() {
               <div className="filterbar-main">
                 <FilterBar filters={filters} onChange={setFilters} />
               </div>
+              <RulesMark file={snapshot?.file ?? null} failed={loadError} />
               <ColumnPicker visible={visible} onChange={onVisible} />
             </div>
-            <p className="capture-summary" title={summary.title}>
-              {summary.text}
-            </p>
             <main className="workspace">
               <div className="pane pane-top">
                 <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} visible={visible} />

@@ -1,27 +1,24 @@
 import type { ConfigValues } from './types.ts'
 
-export function captureSummary(file: ConfigValues | null, failed = false): { text: string; title: string } {
-  if (failed) {
-    return { text: '无法读取配置', title: '' }
-  }
-  if (file == null) {
-    return { text: '正在读取配置', title: '' }
-  }
+export function rulesMark(
+  file: ConfigValues | null,
+  failed = false,
+): { active: boolean; lines: string[] } {
+  if (failed) return { active: false, lines: ['无法读取配置'] }
+  if (file == null) return { active: false, lines: ['正在读取配置'] }
 
-  const parts: string[] = []
-  if (!file.capture) parts.push('抓包已暂停')
-  parts.push(file.capture_empty === 'all' ? '空规则：抓全部' : '空规则：不抓')
-  parts.push(file.capture_https === 'decrypt' ? '未抓 HTTPS：解密' : '未抓 HTTPS：隧道')
-
-  const hosts = file.capture_hosts
-  if (hosts.length === 0) {
-    parts.push('主机：无')
-    return { text: parts.join(' · '), title: '无' }
+  const lines = [
+    file.capture_empty === 'all' ? '空规则：抓全部' : '空规则：不抓',
+    file.capture_https === 'decrypt' ? '未抓 HTTPS：解密' : '未抓 HTTPS：隧道',
+  ]
+  if (file.capture_hosts.length === 0) {
+    lines.push('主机：无')
+  } else {
+    lines.push('主机：', ...file.capture_hosts)
   }
-
-  const listed = hosts.length > 3 ? `${hosts.slice(0, 3).join('、')} 等 ${hosts.length} 条` : hosts.join('、')
-  parts.push(`主机：${listed}`)
-  return { text: parts.join(' · '), title: hosts.join('\n') }
+  const active =
+    file.capture_hosts.length > 0 || file.capture_empty === 'none' || file.capture_https === 'tunnel'
+  return { active, lines }
 }
 
 export function capturePayload(
