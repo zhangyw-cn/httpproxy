@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -286,6 +289,13 @@ func TestPutCapture(t *testing.T) {
 	if snap.File.Capture || snap.Runtime.Capture {
 		t.Fatal("capture still on")
 	}
+	policy := reflect.ValueOf(px).Elem().FieldByName("policy")
+	if policy.FieldByName("capture").Bool() {
+		t.Fatal("proxy policy still captures")
+	}
+	if !policy.FieldByName("emptyAll").Bool() || policy.FieldByName("tunnel").Bool() {
+		t.Fatal("proxy policy changed more than the capture switch")
+	}
 	if snap.File.Proxy != file.Proxy || snap.File.MaxFlows != file.MaxFlows {
 		t.Fatalf("other fields changed: %+v", snap.File)
 	}
@@ -314,6 +324,94 @@ func TestPutCapture(t *testing.T) {
 	if !bytes.Equal(saved, after) {
 		t.Fatal("invalid save changed the file")
 	}
+}
+
+func TestSavedAllowlistAppliesToTheNextRequest(t *testing.T) {
+	dir, file, err := config.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := config.NewSession(dir, file, config.Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+	st := store.New(file.MaxFlows)
+	ca, err := cert.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := api.New(st, ca, session, nil)
+	px := proxy.New("127.0.0.1:0", srv.Sink(), file.MaxBody, ca)
+	srv.SetProxy(px)
+	errCh := make(chan error, 1)
+	go func() { errCh <- px.ListenAndServe() }()
+	t.Cleanup(func() {
+		_ = px.Close()
+		if err := <-errCh; err != nil {
+			t.Errorf("ListenAndServe: %v", err)
+		}
+	})
+	var addr string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if addr = px.Addr(); addr != "" {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if addr == "" {
+		t.Fatal("proxy did not listen")
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "proxied")
+	}))
+	defer upstream.Close()
+	put := func(empty, hosts string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"proxy":%q,"ui":%q,"max_flows":%d,"max_body":%d,"theme":%q,"capture":true,"capture_empty":%q,"capture_https":"decrypt","capture_hosts":%s}`,
+			file.Proxy, file.UI, file.MaxFlows, file.MaxBody, file.Theme, empty, hosts)
+		res := putBody(t, ts.URL+"/api/config", body)
+		defer res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			msg, _ := io.ReadAll(res.Body)
+			t.Fatalf("status %d body %s", res.StatusCode, msg)
+		}
+	}
+	proxyURL, err := url.Parse("http://" + addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+	get := func() {
+		t.Helper()
+		res, err := client.Get(upstream.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		got, _ := io.ReadAll(res.Body)
+		if res.StatusCode != http.StatusOK || string(got) != "proxied" {
+			t.Fatalf("status %d body %q", res.StatusCode, got)
+		}
+	}
+	put("none", `["example.com"]`)
+	get()
+	quiet := time.Now().Add(3 * time.Second)
+	for time.Now().Before(quiet) {
+		if flows := st.List(store.Filter{}); len(flows) != 0 {
+			t.Fatalf("unmatched request recorded %d flows", len(flows))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	put("all", `[]`)
+	get()
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if flows := st.List(store.Filter{}); len(flows) == 1 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("allow-all save recorded %d flows", len(st.List(store.Filter{})))
 }
 
 func putBody(t *testing.T, url, body string) *http.Response {

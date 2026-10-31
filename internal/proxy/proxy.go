@@ -55,6 +55,9 @@ type Proxy struct {
 	recStop                  sync.Once
 	recWG                    sync.WaitGroup
 	handlerWG                sync.WaitGroup
+
+	// bodyCaptureHook, when set by a test, runs once per body this proxy captures.
+	bodyCaptureHook func()
 }
 
 func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
@@ -70,6 +73,13 @@ func New(addr string, sink FlowSink, maxBody int64, ca *cert.Manager) *Proxy {
 		conns:       make(map[net.Conn]struct{}),
 		recordQueue: defaultRecordQueue,
 	}
+}
+
+func (p *Proxy) openBodyCapture(max int64) *bodyCapture {
+	if p.bodyCaptureHook != nil {
+		p.bodyCaptureHook()
+	}
+	return newBodyCapture(max)
 }
 
 func (p *Proxy) SetPolicy(policy capture.Policy) {

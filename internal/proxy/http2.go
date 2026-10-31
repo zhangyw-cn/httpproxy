@@ -92,7 +92,7 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 		resp.Body = http.NoBody
 		return
 	}
-	respCapture := newBodyCapture(limit)
+	respCapture := p.openBodyCapture(limit)
 	writeErr := copyAndFlush(w, io.TeeReader(resp.Body, respCapture))
 	if writeErr != nil {
 		_, _ = io.Copy(respCapture, resp.Body)

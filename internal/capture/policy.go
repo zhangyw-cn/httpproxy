@@ -31,7 +31,7 @@ type rule struct {
 	wildcard bool
 	host     string
 	ip       net.IP
-	ports    [2]int // [0] set; [1] is 0 when only ports[0] counts. 0,0 means 80 and 443.
+	ports    [2]int // A written port is {port, 0}. An omitted port sets anyPort and stores {80, 443}; matching uses anyPort.
 	anyPort  bool
 }
 

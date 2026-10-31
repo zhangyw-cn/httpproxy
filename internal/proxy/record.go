@@ -18,6 +18,8 @@ type flowRecord struct {
 
 type recordJob struct {
 	begin      bool
+	flush      bool
+	done       chan struct{}
 	f          flow.Flow
 	reqCap     *bodyCapture
 	respCap    *bodyCapture
@@ -118,6 +120,12 @@ func (p *Proxy) finishRecord(rec *flowRecord, respHeader http.Header, respCap *b
 }
 
 func (p *Proxy) applyJob(job recordJob) {
+	if job.done != nil {
+		defer close(job.done)
+	}
+	if job.flush {
+		return
+	}
 	if job.begin {
 		p.created(job.f)
 		return

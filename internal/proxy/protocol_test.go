@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -362,7 +363,8 @@ func TestDecryptOnlyForwardsWithoutCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.SetPolicy(policy)
-	before := bodyCaptures.Load()
+	var captures atomic.Int64
+	p.bodyCaptureHook = func() { captures.Add(1) }
 	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL(t, p))}}
 	res, err := client.Get(upstream.URL)
 	if err != nil {
@@ -376,7 +378,7 @@ func TestDecryptOnlyForwardsWithoutCapture(t *testing.T) {
 	if created, updated := sink.counts(); created != 0 || updated != 0 {
 		t.Fatalf("sink created=%d updated=%d", created, updated)
 	}
-	if bodyCaptures.Load() != before {
+	if captures.Load() != 0 {
 		t.Fatal("decrypt-only allocated a body capture")
 	}
 }
@@ -555,15 +557,9 @@ func TestPlainKeepAliveUsesTheNewPolicy(t *testing.T) {
 	}
 	p.SetPolicy(policy)
 	send()
-	deadline := time.Now().Add(100 * time.Millisecond)
-	for {
-		if created, updated := sink.counts(); created != 1 || updated != 1 {
-			t.Fatalf("second sink %d %d", created, updated)
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Millisecond)
+	waitForRecords(t, p)
+	if created, updated := sink.counts(); created != 1 || updated != 1 {
+		t.Fatalf("second sink %d %d", created, updated)
 	}
 }
 
@@ -583,9 +579,118 @@ func TestTLSFailureIsSilentWhenNotRecording(t *testing.T) {
 	if err == nil {
 		t.Fatal("client handshake unexpectedly succeeded")
 	}
-	time.Sleep(100 * time.Millisecond)
+	waitForRecords(t, p)
 	if created, updated := sink.counts(); created != 0 || updated != 0 {
 		t.Fatalf("sink %d %d", created, updated)
+	}
+}
+
+func TestConnectKeepsItsDecisionAfterSetPolicy(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "still-recorded")
+	}))
+	defer upstream.Close()
+	manager, pool := newCA(t)
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, manager)
+	target := upstream.Listener.Addr().String()
+	host, _, _ := net.SplitHostPort(target)
+	tlsConn, err := dialMITM(t, p.Addr(), target, &tls.Config{
+		RootCAs:    pool,
+		ServerName: host,
+		NextProtos: []string{"http/1.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := capture.Compile(false, "all", "decrypt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	if _, err := io.WriteString(tlsConn, "GET / HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tlsConn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "still-recorded" {
+		t.Fatalf("status %d body %q", resp.StatusCode, body)
+	}
+	f := waitFlowCount(t, sink, 1)
+	if f.Scheme != "https" || f.StatusCode != http.StatusOK {
+		t.Fatalf("flow %+v", f)
+	}
+}
+
+func TestDecryptOnlyHTTPSForwardsWithoutCapture(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "clear-body")
+	}))
+	defer upstream.Close()
+	manager, pool := newCA(t)
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, manager)
+	policy, err := capture.Compile(true, "none", "decrypt", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	var captures atomic.Int64
+	p.bodyCaptureHook = func() { captures.Add(1) }
+	target := upstream.Listener.Addr().String()
+	host, _, _ := net.SplitHostPort(target)
+	tlsConn, err := dialMITM(t, p.Addr(), target, &tls.Config{
+		RootCAs:    pool,
+		ServerName: host,
+		NextProtos: []string{"http/1.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(tlsConn, "GET / HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tlsConn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "clear-body" {
+		t.Fatalf("status %d body %q", resp.StatusCode, body)
+	}
+	waitForRecords(t, p)
+	if created, updated := sink.counts(); created != 0 || updated != 0 {
+		t.Fatalf("sink created=%d updated=%d", created, updated)
+	}
+	if captures.Load() != 0 {
+		t.Fatal("decrypt-only allocated a body capture")
+	}
+}
+
+func waitForRecords(t *testing.T, p *Proxy) {
+	t.Helper()
+	done := make(chan struct{})
+	p.mu.Lock()
+	jobs := p.jobs
+	started := p.recStarted
+	p.mu.Unlock()
+	if !started || jobs == nil {
+		t.Fatal("recorder is not running")
+	}
+	select {
+	case jobs <- recordJob{flush: true, done: done}:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recorder queue is full")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recorder did not finish")
 	}
 }
 

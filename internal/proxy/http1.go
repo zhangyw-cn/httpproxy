@@ -243,11 +243,11 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 		f.RespHeaders = copyHeaders(resp.Header)
 	}
 	if websocket && resp.StatusCode == http.StatusSwitchingProtocols {
-		return p.tunnelWebSocket(conn, req, resp, &f, rec)
+		return p.tunnelWebSocket(conn, req, resp, rec)
 	}
 	var respCapture *bodyCapture
 	if record {
-		respCapture = newBodyCapture(limit)
+		respCapture = p.openBodyCapture(limit)
 		resp.Body = struct {
 			io.Reader
 			io.Closer
@@ -269,7 +269,7 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	return writeErr == nil && !closeAfter
 }
 
-func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Response, f *flow.Flow, rec *flowRecord) bool {
+func (p *Proxy) tunnelWebSocket(conn net.Conn, req *http.Request, resp *http.Response, rec *flowRecord) bool {
 	removeHopHeadersPreserveUpgrade(resp.Header)
 	resp.Proto = "HTTP/1.1"
 	resp.ProtoMajor = 1
@@ -348,7 +348,7 @@ func normalizeForHTTP1Client(resp *http.Response, req *http.Request, clientClose
 func (p *Proxy) startFlow(req *http.Request, f *flow.Flow) (*flowRecord, int64) {
 	limit := p.maxBodyLimit()
 	f.ReqHeaders = copyHeaders(req.Header)
-	reqCap := streamRequestBody(req, limit)
+	reqCap := p.streamRequestBody(req, limit)
 	return p.beginRecord(f, reqCap, limit, req.ContentLength), limit
 }
 

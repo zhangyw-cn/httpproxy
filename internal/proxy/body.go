@@ -9,12 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/andybalholm/brotli"
 )
-
-var bodyCaptures atomic.Int64
 
 // bodyCapture is written by the upstream transport goroutine while the
 // handler may read results, so access is serialized.
@@ -26,7 +23,6 @@ type bodyCapture struct {
 }
 
 func newBodyCapture(max int64) *bodyCapture {
-	bodyCaptures.Add(1)
 	if max < 0 {
 		max = 0
 	}
@@ -74,8 +70,8 @@ type teeReadCloser struct {
 // streamRequestBody tees the client body into a capture while forwarding
 // upstream immediately (no prefix buffering). ReqBody is filled as bytes pass
 // through; OnCreated may see an empty body until OnUpdated.
-func streamRequestBody(req *http.Request, max int64) *bodyCapture {
-	capture := newBodyCapture(max)
+func (p *Proxy) streamRequestBody(req *http.Request, max int64) *bodyCapture {
+	capture := p.openBodyCapture(max)
 	if req.Body == nil || req.Body == http.NoBody {
 		return capture
 	}
