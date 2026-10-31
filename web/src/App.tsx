@@ -6,6 +6,7 @@ import ActivityBar from './components/ActivityBar'
 import ColumnPicker from './components/ColumnPicker'
 import FilterBar from './components/FilterBar'
 import FlowDetail from './components/FlowDetail'
+import { loadDock, saveDock } from './detailView'
 import FlowTable from './components/FlowTable'
 import SettingsPane from './components/SettingsPane'
 import TopBar from './components/TopBar'
@@ -45,6 +46,14 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<ConfigSnapshot | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [view, setView] = useState<'capture' | 'settings'>('capture')
+  const [dock, setDock] = useState<'bottom' | 'right'>(() => loadDock())
+  const onToggleDock = () => {
+    setDock((current) => {
+      const next = current === 'bottom' ? 'right' : 'bottom'
+      saveDock(next)
+      return next
+    })
+  }
   const writing = useRef(false)
   const [writeLocked, setWriteLocked] = useState(false)
   const [toggleError, setToggleError] = useState('')
@@ -210,12 +219,12 @@ export default function App() {
               <RulesMark file={snapshot?.file ?? null} failed={loadError} />
               <ColumnPicker visible={visible} onChange={onVisible} />
             </div>
-            <main className="workspace">
-              <div className="pane pane-top">
+            <main className={dock === 'right' ? 'workspace dock-right' : 'workspace dock-bottom'}>
+              <div className="pane pane-list">
                 <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} visible={visible} />
               </div>
-              <div className="pane pane-bottom">
-                <FlowDetail flow={detail} loading={loading} />
+              <div className="pane pane-detail">
+                <FlowDetail flow={detail} loading={loading} dock={dock} onToggleDock={onToggleDock} />
               </div>
             </main>
           </div>

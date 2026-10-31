@@ -16,6 +16,17 @@ const TAB_LABEL: Record<Tab, string> = {
 interface Props {
   flow: Flow | null
   loading: boolean
+  dock: 'bottom' | 'right'
+  onToggleDock: () => void
+}
+
+function DockIcon({ edge }: { edge: 'right' | 'bottom' }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <rect x="2" y="2" width="12" height="12" rx="1" />
+      {edge === 'right' ? <path d="M10 2v12" strokeWidth="2.5" /> : <path d="M2 10h12" strokeWidth="2.5" />}
+    </svg>
+  )
 }
 
 function decodeBase64(b64?: string): string {
@@ -62,7 +73,7 @@ function Body({ text, truncated, size }: { text: string; truncated: boolean; siz
   )
 }
 
-export default function FlowDetail({ flow, loading }: Props) {
+export default function FlowDetail({ flow, loading, dock, onToggleDock }: Props) {
   const [tab, setTab] = useState<Tab>('headers')
   const [mode, setMode] = useState<BodyMode>('pretty')
   const [copied, setCopied] = useState(false)
@@ -139,6 +150,8 @@ export default function FlowDetail({ flow, loading }: Props) {
     }
   }
 
+  const dockLabel = dock === 'bottom' ? '详情放到右侧' : '详情放到下方'
+
   return (
     <div className="detail">
       <div className="tabs">
@@ -174,6 +187,9 @@ export default function FlowDetail({ flow, loading }: Props) {
             {copied ? '已复制' : '复制'}
           </button>
           {copyError ? <span className="copy-error">无法复制</span> : null}
+          <button type="button" className="btn btn-icon" title={dockLabel} aria-label={dockLabel} onClick={onToggleDock}>
+            <DockIcon edge={dock === 'bottom' ? 'right' : 'bottom'} />
+          </button>
         </div>
       </div>
       <div className="detail-body">

@@ -128,11 +128,15 @@ code, pre { font-family: var(--mono); }
 .col-menu-item:has(input:disabled) { cursor: default; }
 .col-menu-item input { margin: 0; }
 
-/* Workspace: top table / bottom detail */
-.workspace { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.pane { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
-.pane-top { flex: 1 1 55%; border-bottom: 1px solid var(--border); }
-.pane-bottom { flex: 1 1 45%; }
+/* Workspace: list + detail dock */
+.workspace { flex: 1; display: flex; min-height: 0; min-width: 0; }
+.workspace.dock-bottom { flex-direction: column; }
+.workspace.dock-right { flex-direction: row; }
+.pane { min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+.dock-bottom .pane-list { flex: 1 1 55%; border-bottom: 1px solid var(--border); }
+.dock-bottom .pane-detail { flex: 1 1 45%; }
+.dock-right .pane-list { flex: 1 1 55%; border-right: 1px solid var(--border); }
+.dock-right .pane-detail { flex: 1 1 45%; }
 
 /* Table */
 .table-wrap { flex: 1; overflow: auto; }
