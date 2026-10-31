@@ -21,6 +21,10 @@ export function rulesMark(
   return { active, lines }
 }
 
+export function captureActionLabel(capture: boolean | null): '开始抓包' | '暂停抓包' {
+  return capture ? '暂停抓包' : '开始抓包'
+}
+
 export function capturePayload(
   file: ConfigValues,
   empty: 'all' | 'none',

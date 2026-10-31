@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { capturePayload, rulesMark } from './src/capture.ts'
+import { captureActionLabel, capturePayload, rulesMark } from './src/capture.ts'
 import type { ConfigValues } from './src/types.ts'
 
 const file: ConfigValues = {
@@ -58,6 +58,14 @@ describe('rulesMark', () => {
       active: false,
       lines: ['空规则：抓全部', '未抓 HTTPS：解密', '主机：无'],
     })
+  })
+})
+
+describe('captureActionLabel', () => {
+  it('names the action the button will take', () => {
+    assert.equal(captureActionLabel(true), '暂停抓包')
+    assert.equal(captureActionLabel(false), '开始抓包')
+    assert.equal(captureActionLabel(null), '开始抓包')
   })
 })
 
