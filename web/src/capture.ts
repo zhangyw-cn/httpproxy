@@ -1,6 +1,9 @@
 import type { ConfigValues } from './types.ts'
 
-export function captureSummary(file: ConfigValues | null): { text: string; title: string } {
+export function captureSummary(file: ConfigValues | null, failed = false): { text: string; title: string } {
+  if (failed) {
+    return { text: '无法读取配置', title: '' }
+  }
   if (file == null) {
     return { text: '正在读取配置', title: '' }
   }

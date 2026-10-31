@@ -20,6 +20,10 @@ describe('captureSummary', () => {
     assert.deepEqual(captureSummary(null), { text: '正在读取配置', title: '' })
   })
 
+  it('says the config failed to load', () => {
+    assert.deepEqual(captureSummary(null, true), { text: '无法读取配置', title: '' })
+  })
+
   it('joins the paused prefix, three sections, and the total count', () => {
     const got = captureSummary(file)
     assert.equal(got.text, '抓包已暂停 · 空规则：抓全部 · 未抓 HTTPS：解密 · 主机：example.com、*.example.com、a.b.example.com 等 4 条')

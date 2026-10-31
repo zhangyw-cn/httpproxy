@@ -176,7 +176,7 @@ export default function App() {
     }
   }
 
-  const summary = captureSummary(snapshot?.file ?? null)
+  const summary = captureSummary(snapshot?.file ?? null, loadError)
 
   return (
     <div className="app">
