@@ -79,6 +79,7 @@ export default function FlowDetail({ flow, loading, dock, onToggleDock }: Props)
   const [copied, setCopied] = useState(false)
   const [copyError, setCopyError] = useState(false)
   const copyTimer = useRef<number | null>(null)
+  const copyFeedbackToken = useRef(0)
 
   const clearCopyTimer = () => {
     if (copyTimer.current == null) return
@@ -89,6 +90,7 @@ export default function FlowDetail({ flow, loading, dock, onToggleDock }: Props)
   useEffect(() => () => clearCopyTimer(), [])
 
   useEffect(() => {
+    copyFeedbackToken.current += 1
     setCopied(false)
     setCopyError(false)
     clearCopyTimer()
@@ -128,14 +130,18 @@ export default function FlowDetail({ flow, loading, dock, onToggleDock }: Props)
             reqHeaders: flow.req_headers,
           })
         : bodyText
+    copyFeedbackToken.current += 1
+    const token = copyFeedbackToken.current
     const write = navigator.clipboard?.writeText
     if (!write) {
+      if (token !== copyFeedbackToken.current) return
       setCopied(false)
       setCopyError(true)
       return
     }
     try {
       await write.call(navigator.clipboard, text)
+      if (token !== copyFeedbackToken.current) return
       setCopyError(false)
       setCopied(true)
       clearCopyTimer()
@@ -144,6 +150,7 @@ export default function FlowDetail({ flow, loading, dock, onToggleDock }: Props)
         copyTimer.current = null
       }, 1500)
     } catch {
+      if (token !== copyFeedbackToken.current) return
       clearCopyTimer()
       setCopied(false)
       setCopyError(true)
