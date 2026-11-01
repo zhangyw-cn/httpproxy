@@ -48,11 +48,9 @@ export default function App() {
   const [view, setView] = useState<'capture' | 'settings'>('capture')
   const [dock, setDock] = useState<'bottom' | 'right'>(() => loadDock())
   const onToggleDock = () => {
-    setDock((current) => {
-      const next = current === 'bottom' ? 'right' : 'bottom'
-      saveDock(next)
-      return next
-    })
+    const next = dock === 'bottom' ? 'right' : 'bottom'
+    setDock(next)
+    saveDock(next)
   }
   const writing = useRef(false)
   const [writeLocked, setWriteLocked] = useState(false)

@@ -87,7 +87,12 @@ export default function FlowDetail({ flow, loading, dock, onToggleDock }: Props)
     copyTimer.current = null
   }
 
-  useEffect(() => () => clearCopyTimer(), [])
+  useEffect(() => {
+    return () => {
+      copyFeedbackToken.current += 1
+      clearCopyTimer()
+    }
+  }, [])
 
   useEffect(() => {
     copyFeedbackToken.current += 1

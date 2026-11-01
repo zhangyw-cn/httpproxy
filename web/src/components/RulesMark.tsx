@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { rulesMark } from '../capture'
 import type { ConfigValues } from '../types'
 
@@ -8,9 +9,10 @@ interface Props {
 
 export default function RulesMark({ file, failed }: Props) {
   const mark = rulesMark(file, failed)
+  const popoverId = useId()
   return (
     <div className={mark.active ? 'rules active' : 'rules'}>
-      <button type="button" className="rules-btn" aria-label="抓包规则">
+      <button type="button" className="rules-btn" aria-label="抓包规则" aria-describedby={popoverId}>
         <svg
           width="16"
           height="16"
@@ -29,7 +31,7 @@ export default function RulesMark({ file, failed }: Props) {
           <circle cx="5" cy="12" r="1.6" fill="var(--bg)" />
         </svg>
       </button>
-      <div className="rules-pop">
+      <div id={popoverId} className="rules-pop" role="tooltip">
         {mark.lines.map((line, index) => (
           <div key={index}>{line}</div>
         ))}
