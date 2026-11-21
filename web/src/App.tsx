@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows, putCapture } from './api'
 import RulesMark from './components/RulesMark'
+import { captureActionLabel } from './capture'
 import { loadVisible, normalizeVisible, saveVisible } from './columns'
 import ActivityBar from './components/ActivityBar'
 import ColumnPicker from './components/ColumnPicker'
@@ -8,9 +9,9 @@ import FilterBar from './components/FilterBar'
 import FlowDetail from './components/FlowDetail'
 import { loadDock, saveDock } from './detailView'
 import FlowTable from './components/FlowTable'
+import HomePane from './components/HomePane'
 import SettingsPane from './components/SettingsPane'
-import TopBar from './components/TopBar'
-import type { ConfigSnapshot, Filters, Flow, FlowSummary } from './types'
+import type { ConfigSnapshot, Filters, Flow, FlowSummary, View } from './types'
 
 function matchStatus(code: number, filter: string): boolean {
   if (!filter) return true
@@ -45,7 +46,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [snapshot, setSnapshot] = useState<ConfigSnapshot | null>(null)
   const [loadError, setLoadError] = useState(false)
-  const [view, setView] = useState<'capture' | 'settings'>('capture')
+  const [view, setView] = useState<View>('home')
   const [dock, setDock] = useState<'bottom' | 'right'>(() => loadDock())
   const onToggleDock = () => {
     const next = dock === 'bottom' ? 'right' : 'bottom'
@@ -185,31 +186,60 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar
-        onClear={onClear}
-        count={flows.length}
-        proxy={snapshot?.runtime.proxy ?? ''}
-        capture={snapshot ? snapshot.file.capture : null}
-        disabled={writeLocked}
-        error={toggleError}
-        onToggle={() => void onToggle()}
-      />
       <div className="shell">
-        <ActivityBar
-          open={view === 'settings'}
-          onToggle={() => setView((current) => (current === 'settings' ? 'capture' : 'settings'))}
-        />
-        <SettingsPane
-          snapshot={snapshot}
-          loadError={loadError}
-          open={view === 'settings'}
-          onSaved={onSaved}
-          writeLocked={writeLocked}
-          beginWrite={beginWrite}
-          endWrite={endWrite}
-        />
+        <ActivityBar view={view} onSelect={setView} />
+
+        {view === 'home' ? (
+          <HomePane
+            snapshot={snapshot}
+            loadError={loadError}
+            captureBusy={writeLocked}
+            captureError={toggleError}
+            onToggleCapture={() => void onToggle()}
+            onOpenCapture={() => setView('capture')}
+            onOpenHosts={() => setView('hosts')}
+            onConfigChanged={onSaved}
+          />
+        ) : null}
+
+        {view === 'hosts' ? (
+          <div className="settings">
+            <h1>Hosts</h1>
+          </div>
+        ) : null}
+
+        {view === 'settings' ? (
+          <SettingsPane
+            snapshot={snapshot}
+            loadError={loadError}
+            open={true}
+            onSaved={onSaved}
+            writeLocked={writeLocked}
+            beginWrite={beginWrite}
+            endWrite={endWrite}
+          />
+        ) : null}
+
         {view === 'capture' ? (
           <div className="capture">
+            <div className="capture-toolbar">
+              <button
+                className="btn"
+                type="button"
+                disabled={writeLocked || snapshot == null}
+                onClick={() => void onToggle()}
+              >
+                {captureActionLabel(snapshot?.file.capture ?? null)}
+              </button>
+              <span className="muted">{flows.length} 条请求</span>
+              <button className="btn" type="button" onClick={() => void onClear()}>
+                清空
+              </button>
+              {toggleError ? <span className="toolbar-error">{toggleError}</span> : null}
+            </div>
+            {snapshot && !snapshot.file.capture ? (
+              <div className="notice">抓包已关闭，HTTPS 以隧道转发，不需要 CA。已有记录保留。</div>
+            ) : null}
             <div className="filterbar">
               <div className="filterbar-main">
                 <FilterBar filters={filters} onChange={setFilters} />
