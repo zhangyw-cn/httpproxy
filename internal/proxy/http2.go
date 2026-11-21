@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -74,7 +75,11 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	prepareOutgoing(req, false)
 	resp, err := p.roundTrip(req, upstreamSNI)
 	if err != nil {
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		if errors.Is(err, errSelfProxy) {
+			http.Error(w, selfProxyMessage, http.StatusBadGateway)
+		} else {
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		}
 		if record {
 			p.failUpstream(rec, err)
 		}

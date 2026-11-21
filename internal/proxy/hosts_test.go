@@ -180,10 +180,71 @@ func TestHostsSelfProxyRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway || string(body) != "refusing to proxy to the proxy's own listen address\n" {
+		t.Fatalf("status = %d body = %q", resp.StatusCode, body)
+	}
+}
+
+func TestHostsSelfProxyTunnelRejected(t *testing.T) {
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, nil)
+	_, proxyPort, err := net.SplitHostPort(p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := capture.Compile(true, "none", "tunnel", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	p.SetHosts("测试", mustHostsTable(t, "127.0.0.1 loop.test\n"))
+
+	conn, err := net.Dial("tcp", p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	target := "loop.test:" + proxyPort
+	if _, err := io.WriteString(conn, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway || string(body) != "refusing to proxy to the proxy's own listen address\n" {
+		t.Fatalf("status = %d body = %q", resp.StatusCode, body)
+	}
+	if created, updated := sink.counts(); created != 0 || updated != 0 {
+		t.Fatalf("self-proxy tunnel recorded flows: created=%d updated=%d", created, updated)
+	}
+}
+
+func TestHostsSelfProxyRejectedHTTP2(t *testing.T) {
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, nil)
+	_, proxyPort, err := net.SplitHostPort(p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetHosts("测试", mustHostsTable(t, "127.0.0.1 loop.test\n"))
+
+	target := "loop.test:" + proxyPort
+	req := httptest.NewRequest(http.MethodGet, "https://"+target+"/", nil)
+	rec := httptest.NewRecorder()
+	p.handleHTTP2Request(rec, req, target, "")
+	if rec.Code != http.StatusBadGateway || rec.Body.String() != "refusing to proxy to the proxy's own listen address\n" {
+		t.Fatalf("status = %d body = %q", rec.Code, rec.Body.String())
 	}
 }
 

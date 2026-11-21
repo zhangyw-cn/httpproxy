@@ -19,6 +19,11 @@ import (
 var errSelfProxy = errors.New("refusing to proxy to the proxy's own listen address")
 
 const (
+	selfProxyMessage  = "refusing to proxy to the proxy's own listen address"
+	selfProxyResponse = selfProxyMessage + "\n"
+)
+
+const (
 	maxIdleConnsTotal   = 128
 	maxIdleConnsPerHost = 6
 	sessionCacheEntries = 128

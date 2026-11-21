@@ -145,13 +145,13 @@ func (p *Proxy) spliceTunnel(conn net.Conn, authority string) {
 		return
 	}
 	if p.isLoopbackTarget(&url.URL{Host: authority}) {
-		writeResponse(conn, http.StatusBadGateway, "refusing to proxy to the proxy's own listen address\n")
+		writeResponse(conn, http.StatusBadGateway, selfProxyResponse)
 		return
 	}
 	upstream, err := p.dialContext(context.Background(), "tcp", authority)
 	if err != nil {
 		if errors.Is(err, errSelfProxy) {
-			writeResponse(conn, http.StatusBadGateway, "refusing to proxy to the proxy's own listen address\n")
+			writeResponse(conn, http.StatusBadGateway, selfProxyResponse)
 			return
 		}
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
@@ -243,7 +243,11 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	prepareOutgoing(req, websocket)
 	resp, err := p.roundTrip(req, upstreamSNI)
 	if err != nil {
-		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
+		if errors.Is(err, errSelfProxy) {
+			writeResponse(conn, http.StatusBadGateway, selfProxyResponse)
+		} else {
+			writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
+		}
 		if record {
 			p.failUpstream(rec, err)
 		}
