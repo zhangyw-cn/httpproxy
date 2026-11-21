@@ -1,5 +1,20 @@
 import type { ConfigValues } from './types.ts'
 
+/** Exactly the three rule keys PUT /api/capture/rules accepts. */
+export interface CaptureRules {
+  capture_empty: 'all' | 'none'
+  capture_https: 'decrypt' | 'tunnel'
+  capture_hosts: string[]
+}
+
+/** Trims each line, drops blank lines, and keeps the input order. */
+function splitHosts(hostsText: string): string[] {
+  return hostsText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+}
+
 export function rulesMark(
   file: ConfigValues | null,
   failed = false,
@@ -35,9 +50,19 @@ export function capturePayload(
     ...file,
     capture_empty: empty,
     capture_https: httpsMode,
-    capture_hosts: hostsText
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== ''),
+    capture_hosts: splitHosts(hostsText),
+  }
+}
+
+/** Builds the body for the capture-rules-only endpoint. */
+export function captureRulesPayload(
+  empty: 'all' | 'none',
+  httpsMode: 'decrypt' | 'tunnel',
+  hostsText: string,
+): CaptureRules {
+  return {
+    capture_empty: empty,
+    capture_https: httpsMode,
+    capture_hosts: splitHosts(hostsText),
   }
 }

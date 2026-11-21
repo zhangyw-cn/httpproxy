@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { captureActionLabel, capturePayload, rulesMark } from './src/capture.ts'
+import { captureActionLabel, capturePayload, captureRulesPayload, rulesMark } from './src/capture.ts'
 import type { ConfigValues } from './src/types.ts'
 
 const file: ConfigValues = {
@@ -13,6 +13,7 @@ const file: ConfigValues = {
   capture_empty: 'all',
   capture_https: 'decrypt',
   capture_hosts: ['example.com', '*.example.com', 'a.b.example.com', 'example.com:8443'],
+  hosts_profile: '',
 }
 
 describe('rulesMark', () => {
@@ -66,6 +67,23 @@ describe('captureActionLabel', () => {
     assert.equal(captureActionLabel(true), '暂停抓包')
     assert.equal(captureActionLabel(false), '开始抓包')
     assert.equal(captureActionLabel(null), '开始抓包')
+  })
+})
+
+describe('captureRulesPayload', () => {
+  it('trims and drops blank lines, keeping order', () => {
+    const got = captureRulesPayload('none', 'tunnel', ' Example.com \n\n *.example.com \n')
+    assert.deepEqual(got, {
+      capture_empty: 'none',
+      capture_https: 'tunnel',
+      capture_hosts: ['Example.com', '*.example.com'],
+    })
+  })
+
+  it('returns exactly the three rule keys', () => {
+    const got = captureRulesPayload('all', 'decrypt', '   ')
+    assert.deepEqual(got, { capture_empty: 'all', capture_https: 'decrypt', capture_hosts: [] })
+    assert.deepEqual(Object.keys(got).sort(), ['capture_empty', 'capture_hosts', 'capture_https'])
   })
 })
 

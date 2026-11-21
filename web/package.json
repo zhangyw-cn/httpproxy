@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test columns.test.ts settings.test.ts capture.test.ts detailView.test.ts"
+    "test": "node --experimental-strip-types --test columns.test.ts settings.test.ts capture.test.ts detailView.test.ts overview.test.ts"
   },
   "dependencies": {
     "react": "^19.3.1",
