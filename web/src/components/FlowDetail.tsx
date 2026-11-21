@@ -225,6 +225,16 @@ export default function FlowDetail({ flow, loading, dock, onToggleDock }: Props)
                 )}
               </dl>
             </section>
+            {flow.upstream_addr ? (
+              <section className="hdr-section">
+                <h4>上游</h4>
+                <dl className="hdr-list">
+                  <div className="hdr-row"><dt>目标：</dt><dd>{`${flow.scheme}://${flow.host}`}</dd></div>
+                  <div className="hdr-row"><dt>实际拨号：</dt><dd>{flow.upstream_addr}</dd></div>
+                  <div className="hdr-row"><dt>Hosts 配置：</dt><dd>{flow.hosts_profile}</dd></div>
+                </dl>
+              </section>
+            ) : null}
             <section className="hdr-section">
               <h4>查询参数</h4>
               {params.length === 0 ? (

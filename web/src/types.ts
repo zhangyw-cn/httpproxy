@@ -32,6 +32,10 @@ export interface Flow extends FlowSummary {
   resp_body?: string
   /** Decompressed copy of resp_body when Content-Encoding was set. */
   resp_body_decoded?: string
+  /** Dial address after a hosts override; absent otherwise. */
+  upstream_addr?: string
+  /** Hosts profile that rewrote the dial address; absent otherwise. */
+  hosts_profile?: string
 }
 
 export interface FlowEvent {
