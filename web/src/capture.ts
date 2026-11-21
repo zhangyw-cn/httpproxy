@@ -40,20 +40,6 @@ export function captureActionLabel(capture: boolean | null): '开始抓包' | '�
   return capture ? '暂停抓包' : '开始抓包'
 }
 
-export function capturePayload(
-  file: ConfigValues,
-  empty: 'all' | 'none',
-  httpsMode: 'decrypt' | 'tunnel',
-  hostsText: string,
-): ConfigValues {
-  return {
-    ...file,
-    capture_empty: empty,
-    capture_https: httpsMode,
-    capture_hosts: splitHosts(hostsText),
-  }
-}
-
 /** Builds the body for the capture-rules-only endpoint. */
 export function captureRulesPayload(
   empty: 'all' | 'none',

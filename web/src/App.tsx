@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clearFlows, connectFlowsWS, getConfig, getFlow, listFlows, putCapture } from './api'
-import RulesMark from './components/RulesMark'
-import { captureActionLabel } from './capture'
 import { loadVisible, normalizeVisible, saveVisible } from './columns'
 import ActivityBar from './components/ActivityBar'
-import ColumnPicker from './components/ColumnPicker'
-import FilterBar from './components/FilterBar'
-import FlowDetail from './components/FlowDetail'
-import { loadDock, saveDock } from './detailView'
-import FlowTable from './components/FlowTable'
+import CapturePane from './components/CapturePane'
 import HomePane from './components/HomePane'
 import SettingsPane from './components/SettingsPane'
+import { loadDock, saveDock } from './detailView'
 import type { ConfigSnapshot, Filters, Flow, FlowSummary, View } from './types'
 
 function matchStatus(code: number, filter: string): boolean {
@@ -212,7 +207,6 @@ export default function App() {
           <SettingsPane
             snapshot={snapshot}
             loadError={loadError}
-            open={true}
             onSaved={onSaved}
             writeLocked={writeLocked}
             beginWrite={beginWrite}
@@ -221,41 +215,26 @@ export default function App() {
         ) : null}
 
         {view === 'capture' ? (
-          <div className="capture">
-            <div className="capture-toolbar">
-              <button
-                className="btn"
-                type="button"
-                disabled={writeLocked || snapshot == null}
-                onClick={() => void onToggle()}
-              >
-                {captureActionLabel(snapshot?.file.capture ?? null)}
-              </button>
-              <span className="muted">{flows.length} 条请求</span>
-              <button className="btn" type="button" onClick={() => void onClear()}>
-                清空
-              </button>
-              {toggleError ? <span className="toolbar-error">{toggleError}</span> : null}
-            </div>
-            {snapshot && !snapshot.file.capture ? (
-              <div className="notice">抓包已关闭，HTTPS 以隧道转发，不需要 CA。已有记录保留。</div>
-            ) : null}
-            <div className="filterbar">
-              <div className="filterbar-main">
-                <FilterBar filters={filters} onChange={setFilters} />
-              </div>
-              <RulesMark file={snapshot?.file ?? null} failed={loadError} />
-              <ColumnPicker visible={visible} onChange={onVisible} />
-            </div>
-            <main className={dock === 'right' ? 'workspace dock-right' : 'workspace dock-bottom'}>
-              <div className="pane pane-list">
-                <FlowTable flows={flows} selectedId={selectedId} onSelect={setSelectedId} visible={visible} />
-              </div>
-              <div className="pane pane-detail">
-                <FlowDetail flow={detail} loading={loading} dock={dock} onToggleDock={onToggleDock} />
-              </div>
-            </main>
-          </div>
+          <CapturePane
+            flows={flows}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            filters={filters}
+            onFilters={setFilters}
+            visible={visible}
+            onVisible={onVisible}
+            detail={detail}
+            loading={loading}
+            dock={dock}
+            onToggleDock={onToggleDock}
+            snapshot={snapshot}
+            loadError={loadError}
+            onClear={() => void onClear()}
+            onToggleCapture={() => void onToggle()}
+            captureBusy={writeLocked}
+            captureError={toggleError}
+            onSaved={onSaved}
+          />
         ) : null}
       </div>
     </div>

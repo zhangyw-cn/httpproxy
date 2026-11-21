@@ -258,6 +258,8 @@ code, pre { font-family: var(--mono); }
   border-bottom: 1px solid var(--border);
   flex: none;
 }
+.capture-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.rules-menu { position: relative; }
 .rules { position: relative; flex: none; }
 .rules-btn {
   height: 24px; width: 24px; padding: 0;
@@ -279,16 +281,23 @@ code, pre { font-family: var(--mono); }
 .rules:hover .rules-pop,
 .rules:focus-within .rules-pop { display: block; }
 .toolbar-error { color: var(--danger); }
-.settings-row-hosts { align-items: flex-start; }
-.settings-row-hosts .settings-label { padding-top: 4px; }
-.settings-hosts-field { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.input.settings-hosts {
-  height: auto;
-  width: 280px;
-  min-height: 68px;
-  padding: 4px 8px;
-  line-height: 18px;
-  resize: vertical;
+.rules-editor {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 4;
+  width: 380px; max-width: calc(100vw - 64px);
+  padding: 10px 12px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
 }
+.rules-editor h2 { margin: 0 0 8px; font-size: 12px; font-weight: 600; }
+.rules-editor .settings-row { margin-bottom: 2px; }
+.rules-editor .settings-label { width: 76px; }
+.rules-editor-hosts { align-items: flex-start; }
+.rules-editor-hosts .settings-label { padding-top: 4px; }
+.rules-editor-hosts-field { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 4px; }
+.rules-editor .input.rules-hosts {
+  height: auto; width: 100%; min-height: 68px;
+  padding: 4px 8px; line-height: 18px; resize: vertical;
+}
+.rules-note { margin: 6px 0; color: var(--warn); }
 .btn:disabled { opacity: 0.55; cursor: default; }
 .btn:disabled:hover { background: var(--bg); }

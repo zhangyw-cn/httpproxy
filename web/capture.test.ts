@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { captureActionLabel, capturePayload, captureRulesPayload, rulesMark } from './src/capture.ts'
+import { captureActionLabel, captureRulesPayload, rulesMark } from './src/capture.ts'
 import type { ConfigValues } from './src/types.ts'
 
 const file: ConfigValues = {
@@ -84,16 +84,5 @@ describe('captureRulesPayload', () => {
     const got = captureRulesPayload('all', 'decrypt', '   ')
     assert.deepEqual(got, { capture_empty: 'all', capture_https: 'decrypt', capture_hosts: [] })
     assert.deepEqual(Object.keys(got).sort(), ['capture_empty', 'capture_hosts', 'capture_https'])
-  })
-})
-
-describe('capturePayload', () => {
-  it('keeps capture and drops blank lines', () => {
-    const got = capturePayload(file, 'none', 'tunnel', ' Example.com \n\n *.example.com \n')
-    assert.equal(got.capture, false)
-    assert.equal(got.capture_empty, 'none')
-    assert.equal(got.capture_https, 'tunnel')
-    assert.deepEqual(got.capture_hosts, ['Example.com', '*.example.com'])
-    assert.equal(got.proxy, file.proxy)
   })
 })
