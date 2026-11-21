@@ -41,6 +41,8 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	if clientBody != nil {
 		defer clientBody.Close()
 	}
+	req.URL.Scheme = "https"
+	req.URL.Host = connectAuthority
 
 	var f flow.Flow
 	var rec *flowRecord
@@ -56,10 +58,12 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 			StartedAt:   time.Now(),
 			ClientAddr:  req.RemoteAddr,
 		}
+		if addr, profile, ok := p.hostsForURL(req.URL); ok {
+			f.UpstreamAddr = addr
+			f.HostsProfile = profile
+		}
 		rec, limit = p.startFlow(req, &f)
 	}
-	req.URL.Scheme = "https"
-	req.URL.Host = connectAuthority
 	if p.isLoopbackTarget(req.URL) {
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		if record {

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -147,8 +148,12 @@ func (p *Proxy) spliceTunnel(conn net.Conn, authority string) {
 		writeResponse(conn, http.StatusBadGateway, "refusing to proxy to the proxy's own listen address\n")
 		return
 	}
-	upstream, err := (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).Dial("tcp", authority)
+	upstream, err := p.dialContext(context.Background(), "tcp", authority)
 	if err != nil {
+		if errors.Is(err, errSelfProxy) {
+			writeResponse(conn, http.StatusBadGateway, "refusing to proxy to the proxy's own listen address\n")
+			return
+		}
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")
 		return
 	}
@@ -199,6 +204,15 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	if host == "" {
 		host = req.Host
 	}
+	if defaultHost != "" {
+		req.URL.Scheme = scheme
+		req.URL.Host = defaultHost
+	} else if req.URL.Scheme == "" {
+		req.URL.Scheme = scheme
+		if req.URL.Host == "" {
+			req.URL.Host = host
+		}
+	}
 	var f flow.Flow
 	var rec *flowRecord
 	var limit int64
@@ -213,16 +227,11 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 			StartedAt:   time.Now(),
 			ClientAddr:  conn.RemoteAddr().String(),
 		}
-		rec, limit = p.startFlow(req, &f)
-	}
-	if defaultHost != "" {
-		req.URL.Scheme = scheme
-		req.URL.Host = defaultHost
-	} else if req.URL.Scheme == "" {
-		req.URL.Scheme = scheme
-		if req.URL.Host == "" {
-			req.URL.Host = host
+		if addr, profile, ok := p.hostsForURL(req.URL); ok {
+			f.UpstreamAddr = addr
+			f.HostsProfile = profile
 		}
+		rec, limit = p.startFlow(req, &f)
 	}
 	if p.isLoopbackTarget(req.URL) {
 		writeResponse(conn, http.StatusBadGateway, "Bad Gateway\n")

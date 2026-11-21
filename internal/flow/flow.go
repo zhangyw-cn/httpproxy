@@ -31,6 +31,11 @@ type Flow struct {
 	DurationMs      int64     `json:"duration_ms"`
 	Error           string    `json:"error,omitempty"`
 	ClientAddr      string    `json:"client_addr"`
+	// UpstreamAddr and HostsProfile are set only when a hosts profile rewrote
+	// the dial target. The Host header and TLS ServerName still use the
+	// original domain.
+	UpstreamAddr string `json:"upstream_addr,omitempty"`
+	HostsProfile string `json:"hosts_profile,omitempty"`
 }
 
 // FlowSummary is list/WS payload without bodies.

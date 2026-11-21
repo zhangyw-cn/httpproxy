@@ -13,6 +13,7 @@ import (
 
 	"httpproxy/internal/capture"
 	"httpproxy/internal/cert"
+	"httpproxy/internal/hosts"
 )
 
 var errSelfProxy = errors.New("refusing to proxy to the proxy's own listen address")
@@ -46,6 +47,8 @@ type Proxy struct {
 	closed                   bool
 	transport                *http.Transport
 	upstreamDisableKeepAlive bool
+	hostsName                string
+	hostsTable               hosts.Table
 	sessions                 tls.ClientSessionCache
 	sniTransports            []sniTransport
 	recordQueue              int
@@ -88,6 +91,25 @@ func (p *Proxy) SetPolicy(policy capture.Policy) {
 	p.mu.Unlock()
 }
 
+// SetHosts installs the hosts profile used for new upstream dials. Idle
+// upstream connections are closed so the next request dials the new target;
+// requests and tunnels already in flight are not interrupted.
+func (p *Proxy) SetHosts(name string, table hosts.Table) {
+	p.mu.Lock()
+	p.hostsName = name
+	p.hostsTable = table
+	transport := p.transport
+	sni := append([]sniTransport(nil), p.sniTransports...)
+	p.mu.Unlock()
+
+	if transport != nil {
+		transport.CloseIdleConnections()
+	}
+	for _, entry := range sni {
+		entry.tr.CloseIdleConnections()
+	}
+}
+
 func (p *Proxy) currentPolicy() capture.Policy {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -127,6 +149,64 @@ func (p *Proxy) sessionCache() tls.ClientSessionCache {
 	return p.sessions
 }
 
+// hostsLookup resolves hostname through the active hosts table. IP literals are
+// never overridden. It reports the mapped IP and the profile name.
+func (p *Proxy) hostsLookup(hostname string) (net.IP, string, bool) {
+	if hostname == "" || net.ParseIP(hostname) != nil {
+		return nil, "", false
+	}
+	p.mu.Lock()
+	table, name := p.hostsTable, p.hostsName
+	p.mu.Unlock()
+	ip, ok := table.Lookup(hostname)
+	if !ok {
+		return nil, "", false
+	}
+	return ip, name, true
+}
+
+// hostsForURL reports the mapped dial target for u and the profile that
+// supplied it. The port always comes from u: an explicit port, else the scheme
+// default. IP-literal URLs and unknown schemes are never overridden.
+func (p *Proxy) hostsForURL(u *url.URL) (addr, profile string, ok bool) {
+	if u == nil {
+		return "", "", false
+	}
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return "", "", false
+		}
+	}
+	ip, name, ok := p.hostsLookup(u.Hostname())
+	if !ok {
+		return "", "", false
+	}
+	return net.JoinHostPort(ip.String(), port), name, true
+}
+
+// dialContext dials the TCP target for addr. Only the dial address is rewritten
+// by hosts: callers keep the original URL, Host header, and TLS ServerName.
+// A mapped target that is this proxy's own listener is rejected.
+func (p *Proxy) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	target := addr
+	if host, port, err := net.SplitHostPort(addr); err == nil {
+		if ip, _, ok := p.hostsLookup(host); ok {
+			target = net.JoinHostPort(ip.String(), port)
+		}
+	}
+	if p.isSelfAddr(target) {
+		return nil, errSelfProxy
+	}
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	return d.DialContext(ctx, network, target)
+}
+
 func (p *Proxy) buildTransport(base *tls.Config, maxIdle, perHost int) *http.Transport {
 	if base == nil {
 		base = &tls.Config{}
@@ -138,7 +218,7 @@ func (p *Proxy) buildTransport(base *tls.Config, maxIdle, perHost int) *http.Tra
 	cfg.NextProtos = []string{"h2", "http/1.1"}
 	cfg.ClientSessionCache = p.sessionCache()
 	return &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           p.dialContext,
 		TLSClientConfig:       cfg,
 		ForceAttemptHTTP2:     true,
 		DisableCompression:    true,
@@ -290,8 +370,7 @@ func (p *Proxy) sniTransport(dialHost, sniHost string) *http.Transport {
 	base.ServerName = sniHost
 	tr := p.buildTransport(base, maxIdleConnsPerHost, maxIdleConnsPerHost)
 	tr.DialTLSContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-		d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-		raw, err := d.DialContext(ctx, network, dialHost)
+		raw, err := p.dialContext(ctx, network, dialHost)
 		if err != nil {
 			return nil, err
 		}
@@ -339,30 +418,46 @@ func (p *Proxy) roundTrip(req *http.Request, upstreamSNI string) (*http.Response
 	return p.sniTransport(dialHost, sniHost).RoundTrip(req)
 }
 
-func (p *Proxy) isLoopbackTarget(u *url.URL) bool {
-	if u == nil {
+// isSelfAddr reports whether hostport names this proxy's own listener.
+func (p *Proxy) isSelfAddr(hostport string) bool {
+	self, _ := p.selfAddrs()
+	if self == "" || hostport == "" {
 		return false
 	}
-	target := u.Host
-	if target == "" {
-		return false
-	}
+	return sameEndpoint(hostport, self)
+}
+
+// selfAddrs returns the bound listener address and the configured address, or
+// empty strings before the proxy starts listening.
+func (p *Proxy) selfAddrs() (listening, configured string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.listener == nil {
+		return "", ""
+	}
+	return p.listener.Addr().String(), p.addr
+}
+
+func (p *Proxy) isLoopbackTarget(u *url.URL) bool {
+	if u == nil || u.Host == "" {
 		return false
 	}
-	self := p.listener.Addr().String()
-	if target == self || target == p.addr {
+	if p.isSelfAddr(u.Host) {
 		return true
 	}
 	// Compare host:port when addr is ":8080" style vs concrete.
+	_, configured := p.selfAddrs()
+	return configured != "" && u.Host == configured
+}
+
+// sameEndpoint reports whether two host:port strings name the same listener.
+func sameEndpoint(target, self string) bool {
+	if target == self {
+		return true
+	}
 	th, tp, err1 := net.SplitHostPort(target)
 	sh, sp, err2 := net.SplitHostPort(self)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	if tp != sp {
+	if err1 != nil || err2 != nil || tp != sp {
 		return false
 	}
 	if th == "" || th == "0.0.0.0" || th == "::" {
