@@ -51,6 +51,13 @@ func (s *Store) Add(f flow.Flow) (evicted []string) {
 	return evicted
 }
 
+// Count returns the number of stored flows.
+func (s *Store) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.order)
+}
+
 // Max returns the ring capacity.
 func (s *Store) Max() int {
 	s.mu.RLock()

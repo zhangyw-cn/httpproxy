@@ -127,3 +127,20 @@ func TestAddSameIDMovesToNewest(t *testing.T) {
 		t.Fatalf("second entry should be id 2, got %+v", list[1])
 	}
 }
+
+func TestCount(t *testing.T) {
+	s := store.New(2)
+	if s.Count() != 0 {
+		t.Fatal(s.Count())
+	}
+	s.Add(flow.Flow{ID: "1"})
+	s.Add(flow.Flow{ID: "2"})
+	s.Add(flow.Flow{ID: "3"})
+	if s.Count() != 2 {
+		t.Fatalf("Count()=%d", s.Count())
+	}
+	s.Clear()
+	if s.Count() != 0 {
+		t.Fatal(s.Count())
+	}
+}

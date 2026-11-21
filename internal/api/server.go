@@ -10,6 +10,7 @@ import (
 	"github.com/coder/websocket"
 
 	"httpproxy/internal/cert"
+	"httpproxy/internal/clients"
 	"httpproxy/internal/config"
 	"httpproxy/internal/flow"
 	"httpproxy/internal/hosts"
@@ -26,6 +27,9 @@ type Server struct {
 	session *config.Session
 	proxy   *proxy.Proxy
 
+	clients   *clients.Tracker
+	startedAt time.Time
+
 	hostsProfiles *hosts.Profiles
 	hostsMu       sync.Mutex
 	hostsActive   string
@@ -38,13 +42,14 @@ type Server struct {
 func New(st *store.Store, ca *cert.Manager, session *config.Session, px *proxy.Proxy) *Server {
 	hub := NewHub()
 	s := &Server{
-		store:   st,
-		ca:      ca,
-		hub:     hub,
-		sink:    &StoreSink{Store: st, Hub: hub},
-		mux:     http.NewServeMux(),
-		session: session,
-		proxy:   px,
+		store:     st,
+		ca:        ca,
+		hub:       hub,
+		sink:      &StoreSink{Store: st, Hub: hub},
+		mux:       http.NewServeMux(),
+		session:   session,
+		proxy:     px,
+		startedAt: time.Now(),
 	}
 	s.routes()
 	return s
@@ -68,6 +73,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("PUT /api/config", s.putConfig)
 	s.mux.HandleFunc("PUT /api/capture", s.putCapture)
+	s.mux.HandleFunc("PUT /api/capture/rules", s.putCaptureRules)
+	s.mux.HandleFunc("GET /api/overview", s.overview)
 	s.mux.HandleFunc("GET /api/hosts", s.listHosts)
 	s.mux.HandleFunc("POST /api/hosts", s.createHost)
 	s.mux.HandleFunc("PUT /api/hosts", s.activateHosts)
