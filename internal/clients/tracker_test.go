@@ -16,19 +16,47 @@ func TestTrackerCounts(t *testing.T) {
 	tr.Request("127.0.0.1", "api.example.com")
 	now = now.Add(time.Second)
 	tr.Tunnel("::1", "v6.example.com")
+	// The close is the most recent activity, so 127.0.0.1 sorts first.
+	now = now.Add(time.Second)
 	tr.DropConn("127.0.0.1")
 	got := tr.Snapshot()
 	if len(got) != 2 {
 		t.Fatalf("%+v", got)
 	}
-	if got[0].IP != "::1" || got[0].Tunnels != 1 || got[0].ActiveConns != 1 {
+	if got[0].IP != "127.0.0.1" || got[0].Requests != 1 || got[0].ActiveConns != 0 {
 		t.Fatalf("%+v", got[0])
 	}
-	if got[1].IP != "127.0.0.1" || got[1].Requests != 1 || got[1].ActiveConns != 0 {
+	if !got[0].LastSeen.Equal(now) {
+		t.Fatalf("drop LastSeen = %v, want %v", got[0].LastSeen, now)
+	}
+	if got[1].IP != "::1" || got[1].Tunnels != 1 || got[1].ActiveConns != 1 {
 		t.Fatalf("%+v", got[1])
 	}
-	if len(got[1].Hosts) != 1 || got[1].Hosts[0] != "api.example.com" {
-		t.Fatalf("%+v", got[1])
+	if len(got[0].Hosts) != 1 || got[0].Hosts[0] != "api.example.com" {
+		t.Fatalf("%+v", got[0])
+	}
+}
+
+func TestTrackerDropConnRefreshesLastSeen(t *testing.T) {
+	now := time.Unix(1000, 0)
+	tr := NewWithClock(func() time.Time { return now })
+	tr.AddConn("10.9.9.9")
+	if got := tr.Snapshot()[0]; !got.LastSeen.Equal(now) {
+		t.Fatalf("add LastSeen = %v, want %v", got.LastSeen, now)
+	}
+	now = now.Add(time.Minute)
+	tr.DropConn("10.9.9.9")
+	got := tr.Snapshot()
+	if len(got) != 1 || got[0].ActiveConns != 0 {
+		t.Fatalf("%+v", got)
+	}
+	if !got[0].LastSeen.Equal(now) {
+		t.Fatalf("drop LastSeen = %v, want %v", got[0].LastSeen, now)
+	}
+	// A drop for an unknown IP must not create an entry.
+	tr.DropConn("10.9.9.10")
+	if got := tr.Snapshot(); len(got) != 1 {
+		t.Fatalf("%+v", got)
 	}
 }
 

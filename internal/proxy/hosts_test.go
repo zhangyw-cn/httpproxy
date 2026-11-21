@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"httpproxy/internal/capture"
+	"httpproxy/internal/cert"
 	"httpproxy/internal/hosts"
 )
 
@@ -245,6 +246,161 @@ func TestHostsSelfProxyRejectedHTTP2(t *testing.T) {
 	p.handleHTTP2Request(rec, req, target, "")
 	if rec.Code != http.StatusBadGateway || rec.Body.String() != "refusing to proxy to the proxy's own listen address\n" {
 		t.Fatalf("status = %d body = %q", rec.Code, rec.Body.String())
+	}
+}
+
+// wildcardProxyAddr starts a proxy bound to every interface and returns the
+// address a local client should dial to reach it.
+func wildcardProxyAddr(t *testing.T, sink *memSink, manager *cert.Manager) (*Proxy, string, string) {
+	t.Helper()
+	p := startProxyAddr(t, "0.0.0.0:0", sink, 1024, manager)
+	_, port, err := net.SplitHostPort(p.Addr())
+	if err != nil {
+		t.Fatalf("proxy address %q: %v", p.Addr(), err)
+	}
+	return p, net.JoinHostPort("127.0.0.1", port), port
+}
+
+func TestHostsSelfProxyWildcardPlainRejected(t *testing.T) {
+	sink := &memSink{}
+	p, proxyAddr, proxyPort := wildcardProxyAddr(t, sink, nil)
+	p.SetHosts("测试", mustHostsTable(t, "127.0.0.1 loop.test\n"))
+
+	resp, err := proxyClient(t, proxyAddr).Get("http://loop.test:" + proxyPort + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway || string(body) != "refusing to proxy to the proxy's own listen address\n" {
+		t.Fatalf("status = %d body = %q", resp.StatusCode, body)
+	}
+}
+
+func TestHostsSelfProxyWildcardTunnelRejected(t *testing.T) {
+	sink := &memSink{}
+	p, proxyAddr, proxyPort := wildcardProxyAddr(t, sink, nil)
+	policy, err := capture.Compile(true, "none", "tunnel", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetPolicy(policy)
+	p.SetHosts("测试", mustHostsTable(t, "127.0.0.1 loop.test\n"))
+
+	conn, err := net.Dial("tcp", proxyAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	target := "loop.test:" + proxyPort
+	if _, err := io.WriteString(conn, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway || string(body) != "refusing to proxy to the proxy's own listen address\n" {
+		t.Fatalf("status = %d body = %q", resp.StatusCode, body)
+	}
+	if created, updated := sink.counts(); created != 0 || updated != 0 {
+		t.Fatalf("self-proxy tunnel recorded flows: created=%d updated=%d", created, updated)
+	}
+}
+
+func TestHostsSelfProxyWildcardMITMRejected(t *testing.T) {
+	manager, pool := newCA(t)
+	sink := &memSink{}
+	p, proxyAddr, proxyPort := wildcardProxyAddr(t, sink, manager)
+	p.SetHosts("测试", mustHostsTable(t, "127.0.0.1 loop.test\n"))
+
+	target := "loop.test:" + proxyPort
+	tlsConn, err := dialMITM(t, proxyAddr, target, &tls.Config{
+		RootCAs:    pool,
+		ServerName: "loop.test",
+		NextProtos: []string{"http/1.1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(tlsConn, "GET / HTTP/1.1\r\nHost: "+target+"\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(tlsConn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway || string(body) != "refusing to proxy to the proxy's own listen address\n" {
+		t.Fatalf("status = %d body = %q", resp.StatusCode, body)
+	}
+}
+
+func TestHostsSelfProxySpecificBindAllowsLoopbackAlias(t *testing.T) {
+	p := startProxy(t, &memSink{}, 1024, nil)
+	_, proxyPort, err := net.SplitHostPort(p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second local listener on the same port must stay reachable: it is a
+	// different endpoint from the proxy's 127.0.0.1 listener.
+	server, err := tryLoopbackUpstream(net.JoinHostPort("127.0.0.2", proxyPort), "alias")
+	if err != nil {
+		t.Skipf("loopback alias 127.0.0.2 is unavailable: %v", err)
+	}
+	defer server.Close()
+	p.SetHosts("测试", mustHostsTable(t, "127.0.0.2 api.test\n"))
+
+	resp, err := proxyClient(t, p.Addr()).Get("http://api.test:" + proxyPort + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "alias" {
+		t.Fatalf("status = %d body = %q", resp.StatusCode, body)
+	}
+}
+
+func TestSameEndpointSelfClassification(t *testing.T) {
+	cases := []struct {
+		name       string
+		target     string
+		listening  string
+		configured string
+		want       bool
+	}{
+		{"wildcard listener loopback target", "127.0.0.1:8080", "[::]:8080", "0.0.0.0:8080", true},
+		{"wildcard listener v6 loopback target", "[::1]:8080", "[::]:8080", "0.0.0.0:8080", true},
+		{"wildcard listener unspecified target", "0.0.0.0:8080", "[::]:8080", "0.0.0.0:8080", true},
+		{"wildcard listener external target", "192.0.2.1:8080", "[::]:8080", "0.0.0.0:8080", false},
+		{"wildcard listener other port", "127.0.0.1:8081", "[::]:8080", "0.0.0.0:8080", false},
+		{"specific listener same target", "127.0.0.1:8080", "127.0.0.1:8080", "127.0.0.1:8080", true},
+		{"specific listener loopback alias", "127.0.0.2:8080", "127.0.0.1:8080", "127.0.0.1:8080", false},
+		{"specific listener unspecified target", "0.0.0.0:8080", "127.0.0.1:8080", "127.0.0.1:8080", true},
+		{"configured wildcard over concrete listener", "127.0.0.2:8080", "127.0.0.1:8080", "0.0.0.0:8080", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sameEndpoint(tc.target, tc.listening, tc.configured); got != tc.want {
+				t.Fatalf("sameEndpoint(%q, %q, %q) = %t, want %t", tc.target, tc.listening, tc.configured, got, tc.want)
+			}
+		})
 	}
 }
 

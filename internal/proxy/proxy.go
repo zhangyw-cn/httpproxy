@@ -492,11 +492,11 @@ func (p *Proxy) roundTrip(req *http.Request, upstreamSNI string) (*http.Response
 
 // isSelfAddr reports whether hostport names this proxy's own listener.
 func (p *Proxy) isSelfAddr(hostport string) bool {
-	self, _ := p.selfAddrs()
-	if self == "" || hostport == "" {
+	listening, configured := p.selfAddrs()
+	if listening == "" || hostport == "" {
 		return false
 	}
-	return sameEndpoint(hostport, self)
+	return sameEndpoint(hostport, listening, configured)
 }
 
 // selfAddrs returns the bound listener address and the configured address, or
@@ -522,23 +522,76 @@ func (p *Proxy) isLoopbackTarget(u *url.URL) bool {
 	return configured != "" && u.Host == configured
 }
 
-// sameEndpoint reports whether two host:port strings name the same listener.
-func sameEndpoint(target, self string) bool {
-	if target == self {
+// sameEndpoint reports whether target names the listener at listening.
+//
+// A wildcard listener (its host is empty, 0.0.0.0, or ::) accepts connections on
+// every local address, so loopback, unspecified, and interface addresses count
+// as self when the port matches. A listener bound to a specific address matches
+// only that address, which keeps a different loopback alias on the same port
+// reachable. An unspecified target is self either way: connecting to 0.0.0.0 or
+// :: lands on the local host.
+func sameEndpoint(target, listening, configured string) bool {
+	th, tp, err := net.SplitHostPort(target)
+	if err != nil {
+		return target == listening || (configured != "" && target == configured)
+	}
+	sh, sp, err := net.SplitHostPort(listening)
+	if err != nil {
+		sh, sp, err = net.SplitHostPort(configured)
+		if err != nil {
+			return false
+		}
+	}
+	if tp != sp {
+		return false
+	}
+
+	wildcard := isWildcardHost(sh)
+	if ch, cp, ok := splitEndpoint(configured); ok && isWildcardHost(ch) && (cp == sp || cp == "0") {
+		wildcard = true
+	}
+
+	tip := net.ParseIP(th)
+	if tip != nil && tip.IsUnspecified() {
 		return true
 	}
-	th, tp, err1 := net.SplitHostPort(target)
-	sh, sp, err2 := net.SplitHostPort(self)
-	if err1 != nil || err2 != nil || tp != sp {
-		return false
+	if tip == nil {
+		return th == sh
 	}
-	if th == "" || th == "0.0.0.0" || th == "::" {
-		return false
+	if wildcard {
+		return isLocalAddrIP(tip)
 	}
-	return th == sh || (isLocalIP(th) && isLocalIP(sh))
+	sip := net.ParseIP(sh)
+	return sip != nil && tip.Equal(sip)
 }
 
-func isLocalIP(host string) bool {
+func splitEndpoint(addr string) (host, port string, ok bool) {
+	host, port, err := net.SplitHostPort(addr)
+	return host, port, err == nil
+}
+
+func isWildcardHost(host string) bool {
+	if host == "" {
+		return true
+	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return ip != nil && ip.IsUnspecified()
+}
+
+// isLocalAddrIP reports whether ip is assigned to a local interface; a wildcard
+// listener is reachable on all of them.
+func isLocalAddrIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsUnspecified() {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		if ifnet, ok := addr.(*net.IPNet); ok && ifnet.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }

@@ -63,8 +63,8 @@ func (t *Tracker) AddConn(ip string) {
 	c.ActiveConns++
 }
 
-// DropConn records that one connection from ip closed. Closing does not count
-// as activity: the entry ages out from its last request or tunnel.
+// DropConn records that one connection from ip closed. A close counts as recent
+// activity: it refreshes LastSeen. It never creates an entry and adds no host.
 func (t *Tracker) DropConn(ip string) {
 	if t == nil || ip == "" {
 		return
@@ -78,6 +78,7 @@ func (t *Tracker) DropConn(ip string) {
 	if c.ActiveConns > 0 {
 		c.ActiveConns--
 	}
+	c.LastSeen = t.now()
 }
 
 // Request counts one forwarded request from ip to host.

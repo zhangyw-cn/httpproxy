@@ -28,7 +28,12 @@ import (
 
 func startProxy(t *testing.T, sink *memSink, maxBody int64, manager *cert.Manager) *Proxy {
 	t.Helper()
-	p := New("127.0.0.1:0", sink, maxBody, manager)
+	return startProxyAddr(t, "127.0.0.1:0", sink, maxBody, manager)
+}
+
+func startProxyAddr(t *testing.T, addr string, sink *memSink, maxBody int64, manager *cert.Manager) *Proxy {
+	t.Helper()
+	p := New(addr, sink, maxBody, manager)
 	// Only trust settings are injected; ALPN is left to the proxy.
 	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true}
 	errCh := make(chan error, 1)
