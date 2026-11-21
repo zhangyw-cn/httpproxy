@@ -211,6 +211,7 @@ func TestConfigValidationMessages(t *testing.T) {
 		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":-1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "正文上限必须是大于等于 0 的整数"},
 		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"blue","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "主题必须是 dark 或 light"},
 		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","extra":true,"capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "配置含有未知字段"},
+		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":123}`, "Hosts 配置名必须是字符串"},
 	}
 	for _, tc := range cases {
 		res := putBody(t, ts.URL+"/api/config", tc.body)

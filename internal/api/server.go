@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
 	"httpproxy/internal/cert"
 	"httpproxy/internal/config"
 	"httpproxy/internal/flow"
+	"httpproxy/internal/hosts"
 	"httpproxy/internal/proxy"
 	"httpproxy/internal/store"
 )
@@ -22,6 +25,14 @@ type Server struct {
 	mux     *http.ServeMux
 	session *config.Session
 	proxy   *proxy.Proxy
+
+	hostsProfiles *hosts.Profiles
+	hostsMu       sync.Mutex
+	hostsActive   string
+	hostsRules    int
+	hostsErr      string
+	hostsModTime  time.Time
+	hostsSize     int64
 }
 
 func New(st *store.Store, ca *cert.Manager, session *config.Session, px *proxy.Proxy) *Server {
@@ -57,6 +68,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/config", s.config)
 	s.mux.HandleFunc("PUT /api/config", s.putConfig)
 	s.mux.HandleFunc("PUT /api/capture", s.putCapture)
+	s.mux.HandleFunc("GET /api/hosts", s.listHosts)
+	s.mux.HandleFunc("POST /api/hosts", s.createHost)
+	s.mux.HandleFunc("PUT /api/hosts", s.activateHosts)
+	s.mux.HandleFunc("GET /api/hosts/{name}", s.getHost)
+	s.mux.HandleFunc("PUT /api/hosts/{name}", s.putHost)
+	s.mux.HandleFunc("POST /api/hosts/{name}/rename", s.renameHost)
+	s.mux.HandleFunc("DELETE /api/hosts/{name}", s.deleteHost)
 	s.mux.HandleFunc("GET /api/flows", s.listFlows)
 	s.mux.HandleFunc("GET /api/flows/{id}", s.getFlow)
 	s.mux.HandleFunc("DELETE /api/flows", s.clearFlows)

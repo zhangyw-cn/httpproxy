@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"httpproxy/internal/capture"
 	"httpproxy/internal/config"
+	"httpproxy/internal/hosts"
 	"httpproxy/internal/proxy"
 )
 
@@ -43,10 +45,31 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, err)
 		return
 	}
+
+	current, _ := s.session.Snapshot()
+	next.HostsProfile = strings.TrimSpace(next.HostsProfile)
+	hostsChanged := next.HostsProfile != strings.TrimSpace(current.HostsProfile)
+	var pendingTable hosts.Table
+	if hostsChanged {
+		if next.HostsProfile != "" && !hosts.ValidName(next.HostsProfile) {
+			writeHostsError(w, hosts.ErrInvalidName)
+			return
+		}
+		table, err := s.loadHostsTable(next.HostsProfile)
+		if err != nil {
+			writeActiveHostsError(w, err)
+			return
+		}
+		pendingTable = table
+	}
+
 	applied, err := s.session.SaveAndApply(next, s.applySaved)
 	if err != nil {
 		writeConfigError(w, err)
 		return
+	}
+	if hostsChanged {
+		s.applyHostsTable(next.HostsProfile, pendingTable)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		File    config.Values `json:"file"`
@@ -155,6 +178,8 @@ func writeConfigError(w http.ResponseWriter, err error) {
 		status, msg = http.StatusBadRequest, "主机规则不合法"
 	case errors.Is(err, config.ErrCaptureHostDup):
 		status, msg = http.StatusBadRequest, "主机规则重复"
+	case errors.Is(err, config.ErrHostsProfile):
+		status, msg = http.StatusBadRequest, "Hosts 配置名必须是字符串"
 	case errors.Is(err, config.ErrMissingField):
 		status, msg = http.StatusBadRequest, "配置缺少字段"
 	case errors.Is(err, config.ErrUnknownField):
