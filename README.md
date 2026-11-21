@@ -136,8 +136,10 @@ The `capture` setting is a single switch.
 - **Capture on:** HTTPS is decrypted for recorded requests (and for unrecorded
   ones when `capture_https` is `decrypt`), following the rules in the capture
   panel:
-  - `capture_empty` — `all` records requests that match no `capture_hosts`
-    rule; `none` records only requests that match one.
+  - `capture_empty` — the empty-rule fallback (空规则), used only while
+    `capture_hosts` is empty: `all` records every request and `none` records
+    nothing. Once `capture_hosts` has one or more rules, only matching requests
+    are recorded and `capture_empty` no longer applies.
   - `capture_hosts` — domain rules that decide what is recorded. Rules use the
     original request authority and are not affected by hosts overrides.
   - `capture_https` — what happens to HTTPS that is not recorded: `decrypt`
@@ -149,9 +151,11 @@ The `capture` setting is a single switch.
   current rules to subsequent requests. Pausing does not clear existing flows.
 
 The capture switch is available on both Home and the capture panel and writes
-`capture` to `config.yaml`. The CA is only needed when capture is on and you
-want HTTPS requests recorded; with capture off, clients see the origin
-certificate and must trust that instead.
+`capture` to `config.yaml`. The CA is needed whenever capture is on and HTTPS is
+decrypted, including HTTPS that is inspected but not recorded. It is not needed
+when capture is off, or for unmatched hosts when `capture_https` is `tunnel`.
+With capture off, clients see the origin certificate and must trust that
+instead.
 
 ## Hosts overrides
 
@@ -211,7 +215,7 @@ Home lists clients aggregated by source IP, independent of capture. Each row
 shows active connections, requests, HTTPS tunnels, last activity, and the most
 recent hosts visited. Client statistics are tracked per-IP in memory only: they
 are reset when the process restarts, idle entries are dropped after five
-minutes, and at most 200 IPs are kept. Clearing flows does not clear them.
+minutes, and at most 200 clients are shown. Clearing flows does not clear them.
 
 The list refreshes every two seconds while Home is visible. Because the default
 listeners are loopback-only, a local setup shows one row, `127.0.0.1`; a second
