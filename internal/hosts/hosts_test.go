@@ -112,3 +112,51 @@ func TestParseLimitsAndCRLF(t *testing.T) {
 		t.Fatal("CRLF line not parsed")
 	}
 }
+
+func TestParseMappingLimitCountsLines(t *testing.T) {
+	var b bytes.Buffer
+	for i := 0; i < 501; i++ {
+		fmt.Fprintf(&b, "10.0.0.1 a%d.example.com b%d.example.com\n", i, i)
+	}
+	table, warnings, err := Parse(b.Bytes())
+	if err != nil {
+		t.Fatalf("501 two-domain lines: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings: %+v", warnings)
+	}
+	if table.Len() != 1002 {
+		t.Fatalf("Len()=%d, want 1002 associations", table.Len())
+	}
+
+	b.Reset()
+	for i := 0; i < MaxMappings; i++ {
+		fmt.Fprintf(&b, "10.0.0.1 h%d.example.com\n", i)
+	}
+	table, _, err = Parse(b.Bytes())
+	if err != nil {
+		t.Fatalf("%d one-domain lines: %v", MaxMappings, err)
+	}
+	if table.Len() != MaxMappings {
+		t.Fatalf("Len()=%d, want %d", table.Len(), MaxMappings)
+	}
+
+	b.Reset()
+	for i := 0; i < MaxMappings+1; i++ {
+		fmt.Fprintf(&b, "10.0.0.1 h%d.example.com\n", i)
+	}
+	_, _, err = Parse(b.Bytes())
+	var pe *ParseError
+	if !errors.As(err, &pe) || pe.Msg != "too many mappings" || pe.Line != MaxMappings+1 {
+		t.Fatalf("1001 one-domain lines: %v", err)
+	}
+
+	b.Reset()
+	for i := 0; i < MaxMappings+1; i++ {
+		fmt.Fprintln(&b, "10.0.0.1 dup.example.com")
+	}
+	_, _, err = Parse(b.Bytes())
+	if !errors.As(err, &pe) || pe.Msg != "too many mappings" {
+		t.Fatalf("duplicate mapping lines not counted: %v", err)
+	}
+}

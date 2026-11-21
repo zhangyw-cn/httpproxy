@@ -9,7 +9,7 @@ import (
 const (
 	// MaxFileBytes is the largest hosts file body Parse accepts.
 	MaxFileBytes = 1 << 20
-	// MaxMappings is the largest number of domain mappings one file may contain.
+	// MaxMappings is the largest number of mapping lines one file may contain.
 	MaxMappings = 1000
 	// MaxHostLen is the longest domain name Parse accepts.
 	MaxHostLen = 253
@@ -74,15 +74,15 @@ func Parse(data []byte) (Table, []Warning, error) {
 			return Table{}, nil, &ParseError{Line: lineNo, Msg: "invalid IP"}
 		}
 
+		mappings++
+		if mappings > MaxMappings {
+			return Table{}, nil, &ParseError{Line: lineNo, Msg: "too many mappings"}
+		}
+
 		for _, field := range fields[1:] {
 			domain, ok := normalizeHostname(field)
 			if !ok {
 				return Table{}, nil, &ParseError{Line: lineNo, Msg: "invalid hostname"}
-			}
-
-			mappings++
-			if mappings > MaxMappings {
-				return Table{}, nil, &ParseError{Line: lineNo, Msg: "too many mappings"}
 			}
 
 			if firstLine, seen := firstLines[domain]; seen {
