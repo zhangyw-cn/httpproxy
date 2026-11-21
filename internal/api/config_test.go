@@ -67,7 +67,7 @@ func TestConfigHTTP(t *testing.T) {
 	defer conn.CloseNow()
 	waitForClient(t, srv)
 
-	res = putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:9090","ui":"127.0.0.1:9091","max_flows":1,"max_body":8,"theme":"light","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`)
+	res = putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:9090","ui":"127.0.0.1:9091","max_flows":1,"max_body":8,"theme":"light","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`)
 	decodeJSON(t, res, &snap)
 	if snap.File.Proxy != "127.0.0.1:9090" {
 		t.Fatalf("file.proxy = %q", snap.File.Proxy)
@@ -127,7 +127,7 @@ func TestConfigHTTP(t *testing.T) {
 		t.Fatal("config file bytes changed")
 	}
 
-	res = putBody(t, ts.URL+"/api/config", `{"proxy":"nope","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`)
+	res = putBody(t, ts.URL+"/api/config", `{"proxy":"nope","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`)
 	assertConfigError(t, res, http.StatusBadRequest, "代理地址必须是 host:port")
 
 	res = putBody(t, ts.URL+"/api/config", `{`)
@@ -167,7 +167,7 @@ func TestConfigMaxFlowsOverride(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	res := putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":2,"max_body":1048576,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`)
+	res := putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":2,"max_body":1048576,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`)
 	var snap struct {
 		File    config.Values `json:"file"`
 		Runtime config.Values `json:"runtime"`
@@ -206,11 +206,11 @@ func TestConfigValidationMessages(t *testing.T) {
 		body string
 		msg  string
 	}{
-		{`{"proxy":"127.0.0.1:8080","ui":"nope","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`, "UI 地址必须是 host:port"},
-		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":0,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`, "保留条数必须是大于等于 1 的整数"},
-		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":-1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`, "正文上限必须是大于等于 0 的整数"},
-		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"blue","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`, "主题必须是 dark 或 light"},
-		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","extra":true,"capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`, "配置含有未知字段"},
+		{`{"proxy":"127.0.0.1:8080","ui":"nope","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "UI 地址必须是 host:port"},
+		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":0,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "保留条数必须是大于等于 1 的整数"},
+		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":-1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "正文上限必须是大于等于 0 的整数"},
+		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"blue","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "主题必须是 dark 或 light"},
+		{`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","extra":true,"capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`, "配置含有未知字段"},
 	}
 	for _, tc := range cases {
 		res := putBody(t, ts.URL+"/api/config", tc.body)
@@ -241,7 +241,7 @@ func TestSetProxyAppliesLiveBodyLimit(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	res := putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":8,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`)
+	res := putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":8,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`)
 	var snap struct {
 		File    config.Values `json:"file"`
 		Runtime config.Values `json:"runtime"`
@@ -264,7 +264,7 @@ func TestConfigNilSession(t *testing.T) {
 	res := request(t, http.MethodGet, ts.URL+"/api/config")
 	assertConfigError(t, res, http.StatusInternalServerError, "无法写入配置")
 
-	res = putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`)
+	res = putBody(t, ts.URL+"/api/config", `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`)
 	assertConfigError(t, res, http.StatusInternalServerError, "无法写入配置")
 }
 
@@ -314,7 +314,7 @@ func TestPutCapture(t *testing.T) {
 	res = putBody(t, ts.URL+"/api/capture", `{"capture":"false"}`)
 	assertConfigError(t, res, http.StatusBadRequest, "抓包开关必须是布尔值")
 
-	body := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1000,"max_body":1048576,"theme":"dark","capture":false,"capture_empty":"none","capture_https":"tunnel","capture_hosts":["*"]}`
+	body := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1000,"max_body":1048576,"theme":"dark","capture":false,"capture_empty":"none","capture_https":"tunnel","capture_hosts":["*"],"hosts_profile":""}`
 	res = putBody(t, ts.URL+"/api/config", body)
 	assertConfigError(t, res, http.StatusBadRequest, "主机规则不合法")
 	after, err := os.ReadFile(filepath.Join(dir.Path(), "config.yaml"))
@@ -367,7 +367,7 @@ func TestSavedAllowlistAppliesToTheNextRequest(t *testing.T) {
 	defer upstream.Close()
 	put := func(empty, hosts string) {
 		t.Helper()
-		body := fmt.Sprintf(`{"proxy":%q,"ui":%q,"max_flows":%d,"max_body":%d,"theme":%q,"capture":true,"capture_empty":%q,"capture_https":"decrypt","capture_hosts":%s}`,
+		body := fmt.Sprintf(`{"proxy":%q,"ui":%q,"max_flows":%d,"max_body":%d,"theme":%q,"capture":true,"capture_empty":%q,"capture_https":"decrypt","capture_hosts":%s,"hosts_profile":""}`,
 			file.Proxy, file.UI, file.MaxFlows, file.MaxBody, file.Theme, empty, hosts)
 		res := putBody(t, ts.URL+"/api/config", body)
 		defer res.Body.Close()

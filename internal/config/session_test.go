@@ -364,6 +364,32 @@ func TestSetCaptureWaitsForABlockingSave(t *testing.T) {
 	}
 }
 
+func TestSetHostsProfile(t *testing.T) {
+	d, file, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewSession(d, file, Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+	applied, err := s.SetHostsProfile("测试环境", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.File.HostsProfile != "测试环境" || applied.Runtime.HostsProfile != "测试环境" {
+		t.Fatalf("%+v", applied)
+	}
+	data, err := os.ReadFile(filepath.Join(d.Path(), "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromDisk, err := ParseYAML(data)
+	if err != nil || fromDisk.HostsProfile != "测试环境" {
+		t.Fatalf("%+v %v", fromDisk, err)
+	}
+	if applied.File.Proxy != file.Proxy || applied.File.MaxFlows != file.MaxFlows {
+		t.Fatalf("other fields changed: %+v", applied.File)
+	}
+}
+
 func savedValues(file Values) Values {
 	next := file
 	next.Proxy = "127.0.0.1:9090"

@@ -24,6 +24,7 @@ type Values struct {
 	CaptureEmpty string   `json:"capture_empty" yaml:"capture_empty"`
 	CaptureHTTPS string   `json:"capture_https" yaml:"capture_https"`
 	CaptureHosts []string `json:"capture_hosts" yaml:"capture_hosts"`
+	HostsProfile string   `json:"hosts_profile" yaml:"hosts_profile"`
 }
 
 var (
@@ -43,6 +44,7 @@ var (
 	ErrCaptureHostLength = capture.ErrCaptureHostLength
 	ErrCaptureHost       = capture.ErrCaptureHost
 	ErrCaptureHostDup    = capture.ErrCaptureHostDup
+	ErrHostsProfile      = errors.New("hosts_profile must be a string")
 )
 
 var knownFields = map[string]struct{}{
@@ -55,6 +57,7 @@ var knownFields = map[string]struct{}{
 	"capture_empty": {},
 	"capture_https": {},
 	"capture_hosts": {},
+	"hosts_profile": {},
 }
 
 func Defaults() Values {
@@ -64,10 +67,11 @@ func Defaults() Values {
 		MaxFlows:     1000,
 		MaxBody:      1048576,
 		Theme:        "dark",
-		Capture:      true,
+		Capture:      false,
 		CaptureEmpty: "all",
 		CaptureHTTPS: "decrypt",
 		CaptureHosts: []string{},
+		HostsProfile: "",
 	}
 }
 
@@ -94,7 +98,7 @@ func ParseYAML(data []byte) (Values, error) {
 	}
 
 	var out Values
-	out.Capture = true
+	out.Capture = false
 	out.CaptureEmpty = "all"
 	out.CaptureHTTPS = "decrypt"
 	out.CaptureHosts = []string{}
@@ -174,6 +178,13 @@ func ParseYAML(data []byte) (Values, error) {
 		}
 		out.CaptureHosts = hosts
 	}
+	if n, ok := fields["hosts_profile"]; ok && !isYAMLNull(n) {
+		s, err := yamlString(n)
+		if err != nil {
+			return Values{}, ErrHostsProfile
+		}
+		out.HostsProfile = s
+	}
 	if _, err := capture.Compile(out.Capture, out.CaptureEmpty, out.CaptureHTTPS, out.CaptureHosts); err != nil {
 		return Values{}, err
 	}
@@ -202,7 +213,7 @@ func ParseJSON(data []byte) (Values, error) {
 	}
 
 	var out Values
-	out.Capture = true
+	out.Capture = false
 	out.CaptureEmpty = "all"
 	out.CaptureHTTPS = "decrypt"
 	out.CaptureHosts = []string{}
@@ -282,11 +293,18 @@ func ParseJSON(data []byte) (Values, error) {
 		}
 		out.CaptureHosts = trimHosts(hosts)
 	}
+	if msg, ok := raw["hosts_profile"]; ok && !jsonNull(msg) {
+		s, err := jsonString(msg)
+		if err != nil {
+			return Values{}, ErrHostsProfile
+		}
+		out.HostsProfile = s
+	}
 	if _, err := capture.Compile(out.Capture, out.CaptureEmpty, out.CaptureHTTPS, out.CaptureHosts); err != nil {
 		return Values{}, err
 	}
 
-	for _, key := range []string{"proxy", "ui", "max_flows", "max_body", "theme", "capture", "capture_empty", "capture_https", "capture_hosts"} {
+	for _, key := range []string{"proxy", "ui", "max_flows", "max_body", "theme", "capture", "capture_empty", "capture_https", "capture_hosts", "hosts_profile"} {
 		msg, ok := raw[key]
 		if !ok || jsonNull(msg) {
 			return Values{}, ErrMissingField
@@ -341,6 +359,9 @@ func MarshalYAML(v Values) []byte {
 			b.WriteByte('\n')
 		}
 	}
+	b.WriteString("hosts_profile: ")
+	b.WriteString(strconv.Quote(v.HostsProfile))
+	b.WriteByte('\n')
 	return []byte(b.String())
 }
 

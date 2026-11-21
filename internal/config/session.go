@@ -84,6 +84,19 @@ func (s *Session) SetCapture(on bool, apply func(Applied)) (Applied, error) {
 	return s.saveLocked(next, apply)
 }
 
+// SetHostsProfile changes only HostsProfile. It copies the current file while
+// holding the session lock, then writes that copy, so a settings save cannot
+// land between the read and the write.
+func (s *Session) SetHostsProfile(name string, apply func(Applied)) (Applied, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next := s.file
+	next.HostsProfile = name
+	next.CaptureHosts = cloneHosts(s.file.CaptureHosts)
+	return s.saveLocked(next, apply)
+}
+
 // saveLocked writes next. The caller holds s.mu.
 func (s *Session) saveLocked(next Values, apply func(Applied)) (Applied, error) {
 	if err := s.dir.Save(next); err != nil {
@@ -107,6 +120,7 @@ func (s *Session) saveLocked(next Values, apply func(Applied)) (Applied, error) 
 	s.runtime.CaptureEmpty = next.CaptureEmpty
 	s.runtime.CaptureHTTPS = next.CaptureHTTPS
 	s.runtime.CaptureHosts = cloneHosts(next.CaptureHosts)
+	s.runtime.HostsProfile = next.HostsProfile
 	applied.Runtime = s.runtime
 	if apply != nil {
 		apply(applied)

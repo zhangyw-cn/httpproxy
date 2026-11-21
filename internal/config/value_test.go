@@ -16,13 +16,53 @@ func TestDefaultsAndRoundTrip(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	text := string(MarshalYAML(Defaults()))
-	for i, key := range []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:", "capture:", "capture_empty:", "capture_https:", "capture_hosts:"} {
+	for i, key := range []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:", "capture:", "capture_empty:", "capture_https:", "capture_hosts:", "hosts_profile:"} {
 		if strings.Index(text, key) < 0 {
 			t.Fatalf("missing %s", key)
 		}
-		if i > 0 && strings.Index(text, key) < strings.Index(text, []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:", "capture:", "capture_empty:", "capture_https:", "capture_hosts:"}[i-1]) {
+		if i > 0 && strings.Index(text, key) < strings.Index(text, []string{"proxy:", "ui:", "max_flows:", "max_body:", "theme:", "capture:", "capture_empty:", "capture_https:", "capture_hosts:", "hosts_profile:"}[i-1]) {
 			t.Fatalf("order %s", text)
 		}
+	}
+}
+
+func TestDefaultsCaptureOffAndHostsProfileEmpty(t *testing.T) {
+	got := Defaults()
+	if got.Capture {
+		t.Fatal("capture should default to false")
+	}
+	if got.HostsProfile != "" {
+		t.Fatalf("hosts_profile = %q", got.HostsProfile)
+	}
+	text := string(MarshalYAML(got))
+	if !strings.Contains(text, "hosts_profile: \"\"\n") {
+		t.Fatalf("%s", text)
+	}
+}
+
+func TestParseYAMLDefaultsHostsProfile(t *testing.T) {
+	raw := []byte("proxy: \"127.0.0.1:8080\"\nui: \"127.0.0.1:8081\"\nmax_flows: 1\nmax_body: 1\ntheme: dark\n")
+	got, err := ParseYAML(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostsProfile != "" {
+		t.Fatalf("%q", got.HostsProfile)
+	}
+	if got.Capture {
+		t.Fatal("capture default")
+	}
+}
+
+func TestParseJSONRequiresAndReadsHostsProfile(t *testing.T) {
+	base := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":false,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":"测试"}`
+	got, err := ParseJSON([]byte(base))
+	if err != nil || got.HostsProfile != "测试" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	missing := strings.Replace(base, `"hosts_profile":"测试"`, `"hosts_profile":null`, 1)
+	if _, err := ParseJSON([]byte(missing)); !errors.Is(err, ErrMissingField) {
+		t.Fatalf("%v", err)
 	}
 }
 
@@ -64,16 +104,16 @@ func TestParseYAMLRejectsShape(t *testing.T) {
 }
 
 func TestParseJSON(t *testing.T) {
-	raw := []byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":2,"max_body":3,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`)
+	raw := []byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":2,"max_body":3,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`)
 	got, err := ParseJSON(raw)
 	if err != nil || got.MaxFlows != 2 || got.MaxBody != 3 {
 		t.Fatalf("%+v %v", got, err)
 	}
 	for _, body := range [][]byte{
-		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1.5,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`),
+		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1.5,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`),
 		[]byte(`not json`),
-		[]byte(`{"proxy":null,"ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`),
-		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","x":1,"capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`),
+		[]byte(`{"proxy":null,"ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`),
+		[]byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","x":1,"capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`),
 	} {
 		if _, err := ParseJSON(body); err == nil {
 			t.Fatalf("accepted %s", body)
@@ -83,14 +123,14 @@ func TestParseJSON(t *testing.T) {
 	if !errors.Is(err, ErrMissingField) {
 		t.Fatal(err)
 	}
-	_, err = ParseJSON([]byte(`{"proxy":null,"ui":"nope","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`))
+	_, err = ParseJSON([]byte(`{"proxy":null,"ui":"nope","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`))
 	if !errors.Is(err, ErrUIAddress) {
 		t.Fatalf("present UI error wins over a missing proxy, got %v", err)
 	}
 }
 
 func TestParseJSONRejectsTrailingBytes(t *testing.T) {
-	valid := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[]}`
+	valid := `{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":[],"hosts_profile":""}`
 	for _, suffix := range []string{"]", "}{", valid} {
 		_, err := ParseJSON([]byte(valid + suffix))
 		if !errors.Is(err, ErrJSON) {
@@ -105,7 +145,7 @@ func TestParseYAMLDefaultsCaptureFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Capture || got.CaptureEmpty != "all" || got.CaptureHTTPS != "decrypt" || len(got.CaptureHosts) != 0 || got.CaptureHosts == nil {
+	if got.Capture || got.CaptureEmpty != "all" || got.CaptureHTTPS != "decrypt" || len(got.CaptureHosts) != 0 || got.CaptureHosts == nil {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -135,7 +175,7 @@ func TestParseJSONRequiresCaptureFields(t *testing.T) {
 	if !errors.Is(err, ErrMissingField) {
 		t.Fatal(err)
 	}
-	raw := []byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":["Example.com"]}`)
+	raw := []byte(`{"proxy":"127.0.0.1:8080","ui":"127.0.0.1:8081","max_flows":1,"max_body":1,"theme":"dark","capture":true,"capture_empty":"all","capture_https":"decrypt","capture_hosts":["Example.com"],"hosts_profile":""}`)
 	got, err := ParseJSON(raw)
 	if err != nil {
 		t.Fatal(err)
