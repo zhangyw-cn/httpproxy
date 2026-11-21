@@ -567,7 +567,8 @@ func TestTLSFailureIsSilentWhenNotRecording(t *testing.T) {
 	manager, _ := newCA(t)
 	sink := &memSink{}
 	p := startProxy(t, sink, 1024, manager)
-	policy, err := capture.Compile(false, "all", "decrypt", nil)
+	// Decrypt without recording: capture is on but no host is selected.
+	policy, err := capture.Compile(true, "none", "decrypt", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +588,7 @@ func TestTLSFailureIsSilentWhenNotRecording(t *testing.T) {
 
 func TestConnectKeepsItsDecisionAfterSetPolicy(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, "still-recorded")
+		_, _ = io.WriteString(w, "still-forwarded")
 	}))
 	defer upstream.Close()
 	manager, pool := newCA(t)
@@ -603,7 +604,9 @@ func TestConnectKeepsItsDecisionAfterSetPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := capture.Compile(false, "all", "decrypt", nil)
+	// The CONNECT was decrypted. Off + tunnel would tunnel a new CONNECT, but
+	// this connection keeps its decrypt decision and only stops recording.
+	policy, err := capture.Compile(false, "all", "tunnel", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,13 +620,101 @@ func TestConnectKeepsItsDecisionAfterSetPolicy(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || string(body) != "still-recorded" {
+	if resp.StatusCode != http.StatusOK || string(body) != "still-forwarded" {
 		t.Fatalf("status %d body %q", resp.StatusCode, body)
 	}
-	f := waitFlowCount(t, sink, 1)
-	if f.Scheme != "https" || f.StatusCode != http.StatusOK {
-		t.Fatalf("flow %+v", f)
+	waitForRecords(t, p)
+	if created, updated := sink.counts(); created != 0 || updated != 0 {
+		t.Fatalf("paused request was recorded: created=%d updated=%d", created, updated)
 	}
+}
+
+func TestPauseCaptureStopsRecordingOnOpenMITMConnection(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+
+	manager, pool := newCA(t)
+	sink := &memSink{}
+	p := startProxy(t, sink, 1024, manager)
+	target := upstream.Listener.Addr().String()
+	host, _, _ := net.SplitHostPort(target)
+	tlsConn, err := dialMITM(t, p.Addr(), target, &tls.Config{RootCAs: pool, ServerName: host, NextProtos: []string{"http/1.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	on, _ := capture.Compile(true, "all", "decrypt", nil)
+	off, _ := capture.Compile(false, "all", "decrypt", nil)
+	p.SetPolicy(on)
+
+	reader := bufio.NewReader(tlsConn)
+	send := func() {
+		t.Helper()
+		if _, err := io.WriteString(tlsConn, "GET / HTTP/1.1\r\nHost: "+target+"\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+
+	send()
+	waitFlowCount(t, sink, 1)
+
+	p.SetPolicy(off)
+	send()
+	quietUntil := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(quietUntil) {
+		if _, updated := sink.counts(); updated != 1 {
+			t.Fatalf("pause recorded a flow: %d", updated)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	p.SetPolicy(on)
+	send()
+	waitFlowCount(t, sink, 2)
+}
+
+func TestPauseCaptureStopsRecordingNewHTTP2Streams(t *testing.T) {
+	upstream := newH2TLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+
+	sink := &memSink{}
+	p := New("", sink, 1024, nil)
+	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true}
+	t.Cleanup(func() { _ = p.Close() })
+	target := upstream.Listener.Addr().String()
+
+	on, _ := capture.Compile(true, "all", "decrypt", nil)
+	off, _ := capture.Compile(false, "all", "decrypt", nil)
+	send := func() {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "https://"+target+"/", nil)
+		p.handleHTTP2Request(httptest.NewRecorder(), req, target, "")
+	}
+
+	p.SetPolicy(on)
+	send()
+	waitFlowCount(t, sink, 1)
+
+	p.SetPolicy(off)
+	send()
+	waitForRecords(t, p)
+	if _, updated := sink.counts(); updated != 1 {
+		t.Fatalf("pause recorded a stream: %d", updated)
+	}
+
+	p.SetPolicy(on)
+	send()
+	waitFlowCount(t, sink, 2)
 }
 
 func TestDecryptOnlyHTTPSForwardsWithoutCapture(t *testing.T) {

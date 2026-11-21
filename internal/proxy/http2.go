@@ -9,19 +9,20 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/net/http2"
 
+	"httpproxy/internal/capture"
 	"httpproxy/internal/flow"
 )
 
-func (p *Proxy) handleHTTP2(conn *tls.Conn, connectAuthority, upstreamSNI string, record bool) {
+func (p *Proxy) handleHTTP2(conn *tls.Conn, connectAuthority, upstreamSNI string) {
 	server := &http2.Server{}
 	server.ServeConn(conn, &http2.ServeConnOpts{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			p.handleHTTP2Request(w, req, connectAuthority, upstreamSNI, record)
+			p.handleHTTP2Request(w, req, connectAuthority, upstreamSNI)
 		}),
 	})
 }
 
-func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, connectAuthority, upstreamSNI string, record bool) {
+func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, connectAuthority, upstreamSNI string) {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -31,6 +32,10 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	p.handlerWG.Add(1)
 	p.mu.Unlock()
 	defer p.handlerWG.Done()
+
+	// Recording is decided per stream so pausing capture stops new flows
+	// without tearing down the already-decrypted connection.
+	record := p.currentPolicy().Decide(true, connectAuthority) == capture.Record
 
 	clientBody := req.Body
 	if clientBody != nil {

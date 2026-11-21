@@ -82,6 +82,14 @@ func Compile(capture bool, empty, httpsMode string, hosts []string) (Policy, err
 }
 
 func (p Policy) Decide(https bool, authority string) Action {
+	if !p.capture {
+		// Capture off never needs plaintext, so HTTPS is tunneled end to end.
+		// Plain HTTP still has to be forwarded, just without recording.
+		if https {
+			return Tunnel
+		}
+		return DecryptOnly
+	}
 	if p.records(https, authority) {
 		return Record
 	}

@@ -591,6 +591,6 @@ func TestClosedHTTP2RequestAborts(t *testing.T) {
 			t.Fatalf("recover = %v, want http.ErrAbortHandler", got)
 		}
 	}()
-	p.handleHTTP2Request(nil, &http.Request{}, "127.0.0.1:1", "", false)
+	p.handleHTTP2Request(nil, &http.Request{}, "127.0.0.1:1", "")
 	t.Fatal("handler returned")
 }

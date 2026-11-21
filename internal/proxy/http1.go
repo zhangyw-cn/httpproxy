@@ -78,7 +78,9 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 		p.spliceTunnel(conn, connectAuthority)
 		return
 	}
-	record := action == capture.Record
+	// The CONNECT decision (decrypt vs tunnel) is fixed for this connection.
+	// Recording is re-decided per request so pausing capture stops new flows.
+	recordHandshakeFailure := action == capture.Record
 
 	if p.ca == nil {
 		writeResponse(conn, http.StatusBadGateway, "HTTPS interception requires a CA\n")
@@ -110,14 +112,14 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 	started := time.Now()
 	_ = conn.SetDeadline(started.Add(tlsHandshakeTimeout))
 	if err := tlsConn.Handshake(); err != nil {
-		if record && !errors.Is(err, io.EOF) {
+		if recordHandshakeFailure && !errors.Is(err, io.EOF) {
 			p.recordTLSFailure(conn, connectAuthority, started, err)
 		}
 		return
 	}
 	_ = conn.SetDeadline(time.Time{})
 	if tlsConn.ConnectionState().NegotiatedProtocol == "h2" {
-		p.handleHTTP2(tlsConn, connectAuthority, clientSNI, record)
+		p.handleHTTP2(tlsConn, connectAuthority, clientSNI)
 		return
 	}
 
@@ -129,6 +131,7 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 			return
 		}
 		_ = tlsConn.SetReadDeadline(time.Time{})
+		record := p.currentPolicy().Decide(true, connectAuthority) == capture.Record
 		if !p.handleRequest(tlsConn, req, "https", connectAuthority, clientSNI, record) {
 			return
 		}

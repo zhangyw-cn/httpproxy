@@ -74,15 +74,18 @@ func TestDecideEmptyListAndSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if off.Decide(true, "example.com:443") != DecryptOnly {
-		t.Fatal("switch off ignores the allowlist when https mode is decrypt")
+	if off.Decide(true, "example.com:443") != Tunnel {
+		t.Fatal("capture off must tunnel HTTPS")
 	}
-	offTunnel, err := Compile(false, "all", "tunnel", []string{"example.com"})
+	if off.Decide(false, "example.com") != DecryptOnly {
+		t.Fatal("plain HTTP still forwards without recording")
+	}
+	offTunnel, err := Compile(false, "all", "tunnel", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if offTunnel.Decide(true, "example.com:443") != Tunnel {
-		t.Fatal("switch off uses capture_https")
+		t.Fatal("capture off ignores capture_https")
 	}
 }
 

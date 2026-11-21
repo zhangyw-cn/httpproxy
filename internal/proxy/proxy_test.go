@@ -474,7 +474,7 @@ func TestHTTP2ResponseCaptureFinishesAfterClientWriteFailure(t *testing.T) {
 	p := New("", sink, 4, nil)
 	p.UpstreamTLS = &tls.Config{InsecureSkipVerify: true} // httptest uses a private test CA.
 	req := httptest.NewRequest(http.MethodGet, "https://"+upstream.Listener.Addr().String()+"/", nil)
-	p.handleHTTP2Request(failingResponseWriter{header: make(http.Header)}, req, upstream.Listener.Addr().String(), "", true)
+	p.handleHTTP2Request(failingResponseWriter{header: make(http.Header)}, req, upstream.Listener.Addr().String(), "")
 
 	f := waitUpdatedFlow(t, sink)
 	if string(f.RespBody) != "abcd" || f.RespSize != 6 || !f.RespTruncated {
