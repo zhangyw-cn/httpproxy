@@ -11,7 +11,9 @@ import (
 	"httpproxy/internal/api"
 	"httpproxy/internal/capture"
 	"httpproxy/internal/cert"
+	"httpproxy/internal/clients"
 	"httpproxy/internal/config"
+	"httpproxy/internal/hosts"
 	"httpproxy/internal/proxy"
 	"httpproxy/internal/store"
 	"httpproxy/internal/ui"
@@ -70,6 +72,12 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
+	profiles, err := hosts.OpenProfiles(dir.Path())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hosts: %v\n", err)
+		return 1
+	}
+	tracker := clients.New()
 
 	session := config.NewSession(dir, file, config.Overrides{
 		Proxy:    opt.proxySet,
@@ -82,6 +90,13 @@ func run(args []string) int {
 	apiServer := api.New(st, ca, session, nil)
 	proxyServer := proxy.New(runtime.Proxy, apiServer.Sink(), runtime.MaxBody, ca)
 	apiServer.SetProxy(proxyServer)
+	apiServer.SetHostsProfiles(profiles)
+	apiServer.SetClients(tracker)
+	proxyServer.SetClientTracker(tracker)
+	if err := apiServer.InitHosts(); err != nil {
+		fmt.Fprintf(os.Stderr, "hosts: %v\n", err)
+		return 1
+	}
 	policy, err := capture.Compile(runtime.Capture, runtime.CaptureEmpty, runtime.CaptureHTTPS, runtime.CaptureHosts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
