@@ -4,6 +4,7 @@ import { loadVisible, normalizeVisible, saveVisible } from './columns'
 import ActivityBar from './components/ActivityBar'
 import CapturePane from './components/CapturePane'
 import HomePane from './components/HomePane'
+import HostsPane from './components/HostsPane'
 import SettingsPane from './components/SettingsPane'
 import { loadDock, saveDock } from './detailView'
 import type { ConfigSnapshot, Filters, Flow, FlowSummary, View } from './types'
@@ -198,9 +199,12 @@ export default function App() {
         ) : null}
 
         {view === 'hosts' ? (
-          <div className="settings">
-            <h1>Hosts</h1>
-          </div>
+          <HostsPane
+            writeLocked={writeLocked}
+            beginWrite={beginWrite}
+            endWrite={endWrite}
+            onConfigChanged={onSaved}
+          />
         ) : null}
 
         {view === 'settings' ? (
