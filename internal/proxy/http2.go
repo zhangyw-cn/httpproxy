@@ -34,6 +34,14 @@ func (p *Proxy) handleHTTP2Request(w http.ResponseWriter, req *http.Request, con
 	p.mu.Unlock()
 	defer p.handlerWG.Done()
 
+	// Each decrypted HTTP/2 stream counts once; the CONNECT itself was
+	// counted as a tunnel by handleConnect.
+	clientHost := connectAuthority
+	if clientHost == "" {
+		clientHost = req.Host
+	}
+	p.clientRequestAddr(req.RemoteAddr, clientHost)
+
 	// Recording is decided per stream so pausing capture stops new flows
 	// without tearing down the already-decrypted connection.
 	record := p.currentPolicy().Decide(true, connectAuthority) == capture.Record

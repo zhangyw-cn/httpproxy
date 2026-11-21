@@ -74,6 +74,13 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 	if connectAuthority == "" {
 		connectAuthority = connectReq.Host
 	}
+	connectHost := hostWithoutPort(connectAuthority)
+	if connectHost == "" {
+		connectHost = hostWithoutPort(connectReq.Host)
+	}
+	// A CONNECT is one tunnel whether it is spliced or decrypted below.
+	p.clientTunnel(conn, connectHost)
+
 	action := p.currentPolicy().Decide(true, connectAuthority)
 	if action == capture.Tunnel {
 		p.spliceTunnel(conn, connectAuthority)
@@ -91,10 +98,6 @@ func (p *Proxy) handleConnect(conn net.Conn, connectReq *http.Request) {
 		return
 	}
 
-	connectHost := hostWithoutPort(connectAuthority)
-	if connectHost == "" {
-		connectHost = hostWithoutPort(connectReq.Host)
-	}
 	var clientSNI string
 	tlsConn := tls.Server(conn, &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -204,6 +207,7 @@ func (p *Proxy) handleRequest(conn net.Conn, req *http.Request, scheme, defaultH
 	if host == "" {
 		host = req.Host
 	}
+	p.clientRequest(conn, host)
 	if defaultHost != "" {
 		req.URL.Scheme = scheme
 		req.URL.Host = defaultHost

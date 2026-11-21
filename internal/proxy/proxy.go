@@ -13,6 +13,7 @@ import (
 
 	"httpproxy/internal/capture"
 	"httpproxy/internal/cert"
+	"httpproxy/internal/clients"
 	"httpproxy/internal/hosts"
 )
 
@@ -50,6 +51,7 @@ type Proxy struct {
 	listener                 net.Listener
 	conns                    map[net.Conn]struct{}
 	closed                   bool
+	tracker                  *clients.Tracker
 	transport                *http.Transport
 	upstreamDisableKeepAlive bool
 	hostsName                string
@@ -136,6 +138,62 @@ func (p *Proxy) maxBodyLimit() int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.maxBody
+}
+
+// SetClientTracker installs the client tracker that records accepted
+// connections, forwarded requests, and CONNECT tunnels. A nil tracker disables
+// tracking; it is never required for proxying.
+func (p *Proxy) SetClientTracker(t *clients.Tracker) {
+	p.mu.Lock()
+	p.tracker = t
+	p.mu.Unlock()
+}
+
+func (p *Proxy) clientTracker() *clients.Tracker {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.tracker
+}
+
+// clientRequest counts one forwarded request from conn's client to host.
+func (p *Proxy) clientRequest(conn net.Conn, host string) {
+	p.clientRequestAddr(remoteIP(conn.RemoteAddr()), host)
+}
+
+// clientRequestAddr counts one forwarded request from a raw RemoteAddr.
+func (p *Proxy) clientRequestAddr(remoteAddr, host string) {
+	tracker := p.clientTracker()
+	if tracker == nil {
+		return
+	}
+	tracker.Request(addrIP(remoteAddr), hostWithoutPort(host))
+}
+
+// clientTunnel counts one CONNECT tunnel from conn's client to host.
+func (p *Proxy) clientTunnel(conn net.Conn, host string) {
+	tracker := p.clientTracker()
+	if tracker == nil {
+		return
+	}
+	tracker.Tunnel(remoteIP(conn.RemoteAddr()), hostWithoutPort(host))
+}
+
+// remoteIP returns the IP part of a remote address. It never fails: a bare
+// address is returned unchanged, and a nil addr yields an empty IP.
+func remoteIP(addr net.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	return addrIP(addr.String())
+}
+
+// addrIP returns the IP part of "host:port", or addr unchanged when it has no
+// port. A tracker ignores the empty result.
+func addrIP(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func (p *Proxy) baseTLS() *tls.Config {
@@ -291,10 +349,19 @@ func (p *Proxy) ListenAndServe() error {
 		}
 		p.conns[conn] = struct{}{}
 		p.handlerWG.Add(1)
+		tracker := p.tracker
 		p.mu.Unlock()
+
+		clientIP := remoteIP(conn.RemoteAddr())
+		if tracker != nil {
+			tracker.AddConn(clientIP)
+		}
 
 		go func() {
 			defer p.handlerWG.Done()
+			if tracker != nil {
+				defer tracker.DropConn(clientIP)
+			}
 			defer func() {
 				_ = conn.Close()
 				p.mu.Lock()
