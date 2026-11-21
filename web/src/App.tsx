@@ -233,6 +233,8 @@ export default function App() {
             onToggleCapture={() => void onToggle()}
             captureBusy={writeLocked}
             captureError={toggleError}
+            beginWrite={beginWrite}
+            endWrite={endWrite}
             onSaved={onSaved}
           />
         ) : null}

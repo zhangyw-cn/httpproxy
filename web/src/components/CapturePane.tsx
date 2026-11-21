@@ -26,6 +26,8 @@ interface Props {
   onToggleCapture: () => void
   captureBusy: boolean
   captureError: string
+  beginWrite: () => boolean
+  endWrite: () => void
   onSaved: (snapshot: ConfigSnapshot) => void
 }
 
@@ -47,6 +49,8 @@ export default function CapturePane({
   onToggleCapture,
   captureBusy,
   captureError,
+  beginWrite,
+  endWrite,
   onSaved,
 }: Props) {
   const [rulesOpen, setRulesOpen] = useState(false)
@@ -73,7 +77,7 @@ export default function CapturePane({
             <button
               className="btn"
               type="button"
-              disabled={snapshot == null}
+              disabled={captureBusy || snapshot == null}
               aria-haspopup="dialog"
               aria-expanded={rulesOpen}
               onClick={() => setRulesOpen(true)}
@@ -83,6 +87,9 @@ export default function CapturePane({
             {rulesOpen && snapshot ? (
               <CaptureRules
                 snapshot={snapshot}
+                writeLocked={captureBusy}
+                beginWrite={beginWrite}
+                endWrite={endWrite}
                 onSaved={onSaved}
                 onClose={() => setRulesOpen(false)}
               />

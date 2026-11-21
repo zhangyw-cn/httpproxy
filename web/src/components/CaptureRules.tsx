@@ -5,22 +5,26 @@ import type { ConfigSnapshot } from '../types'
 
 interface Props {
   snapshot: ConfigSnapshot
+  writeLocked: boolean
+  beginWrite: () => boolean
+  endWrite: () => void
   onSaved: (snapshot: ConfigSnapshot) => void
   onClose: () => void
 }
 
 /** Popover form for the three capture rules; saves through PUT /api/capture/rules. */
-export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
+export default function CaptureRules({ snapshot, writeLocked, beginWrite, endWrite, onSaved, onClose }: Props) {
   const [empty, setEmpty] = useState<'all' | 'none'>(snapshot.file.capture_empty)
   const [httpsMode, setHttpsMode] = useState<'decrypt' | 'tunnel'>(snapshot.file.capture_https)
   const [hostsText, setHostsText] = useState(snapshot.file.capture_hosts.join('\n'))
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const hostsId = useId()
+  const locked = saving || writeLocked
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (saving) return
+    if (saving || !beginWrite()) return
     setSaving(true)
     setSaveError('')
     try {
@@ -30,6 +34,7 @@ export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : '无法写入配置')
     } finally {
+      endWrite()
       setSaving(false)
     }
   }
@@ -42,7 +47,7 @@ export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
         <button
           type="button"
           className={empty === 'all' ? 'btn seg-btn active' : 'btn seg-btn'}
-          disabled={saving}
+          disabled={locked}
           onClick={() => setEmpty('all')}
         >
           抓全部
@@ -50,7 +55,7 @@ export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
         <button
           type="button"
           className={empty === 'none' ? 'btn seg-btn active' : 'btn seg-btn'}
-          disabled={saving}
+          disabled={locked}
           onClick={() => setEmpty('none')}
         >
           不抓
@@ -61,7 +66,7 @@ export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
         <button
           type="button"
           className={httpsMode === 'decrypt' ? 'btn seg-btn active' : 'btn seg-btn'}
-          disabled={saving}
+          disabled={locked}
           onClick={() => setHttpsMode('decrypt')}
         >
           解密
@@ -69,7 +74,7 @@ export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
         <button
           type="button"
           className={httpsMode === 'tunnel' ? 'btn seg-btn active' : 'btn seg-btn'}
-          disabled={saving}
+          disabled={locked}
           onClick={() => setHttpsMode('tunnel')}
         >
           隧道
@@ -81,7 +86,7 @@ export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
           <textarea
             id={hostsId}
             className="input rules-hosts"
-            disabled={saving}
+            disabled={locked}
             rows={3}
             value={hostsText}
             placeholder={'example.com\n*.example.com\nexample.com:8443'}
@@ -93,8 +98,8 @@ export default function CaptureRules({ snapshot, onSaved, onClose }: Props) {
       {snapshot.file.capture ? null : <p className="rules-note">抓包关闭时以上规则不生效</p>}
       <div className="settings-row">
         <span className="settings-label" />
-        <button className="btn" type="submit" disabled={saving}>保存</button>
-        <button className="btn" type="button" disabled={saving} onClick={onClose}>关闭</button>
+        <button className="btn" type="submit" disabled={locked}>保存</button>
+        <button className="btn" type="button" disabled={locked} onClick={onClose}>关闭</button>
       </div>
       {saveError ? <p className="settings-error">{saveError}</p> : null}
     </form>

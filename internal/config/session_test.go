@@ -390,6 +390,134 @@ func TestSetHostsProfile(t *testing.T) {
 	}
 }
 
+func TestSetCaptureRules(t *testing.T) {
+	d, file, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Capture = true
+	file.HostsProfile = "测试环境"
+	s := NewSession(d, file, Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+
+	t.Run("changes only the rules and keeps capture and hosts_profile", func(t *testing.T) {
+		wantHosts := []string{"example.com", "*.example.com"}
+		applied, err := s.SetCaptureRules("none", "tunnel", wantHosts, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if applied.File.CaptureEmpty != "none" || applied.File.CaptureHTTPS != "tunnel" {
+			t.Fatalf("file rules %+v", applied.File)
+		}
+		if !reflect.DeepEqual(applied.File.CaptureHosts, wantHosts) {
+			t.Fatalf("file hosts %+v", applied.File.CaptureHosts)
+		}
+		if !applied.File.Capture || applied.File.HostsProfile != "测试环境" {
+			t.Fatalf("file lost capture/hosts_profile: %+v", applied.File)
+		}
+		if applied.Runtime.CaptureEmpty != "none" || applied.Runtime.CaptureHTTPS != "tunnel" {
+			t.Fatalf("runtime rules %+v", applied.Runtime)
+		}
+		if !reflect.DeepEqual(applied.Runtime.CaptureHosts, wantHosts) {
+			t.Fatalf("runtime hosts %+v", applied.Runtime.CaptureHosts)
+		}
+		if !applied.Runtime.Capture || applied.Runtime.HostsProfile != "测试环境" {
+			t.Fatalf("runtime lost capture/hosts_profile: %+v", applied.Runtime)
+		}
+
+		gotFile, gotRuntime := s.Snapshot()
+		if !reflect.DeepEqual(gotFile, applied.File) || !reflect.DeepEqual(gotRuntime, applied.Runtime) {
+			t.Fatalf("snapshot file %+v runtime %+v", gotFile, gotRuntime)
+		}
+		assertConfigFile(t, d, applied.File)
+	})
+
+	t.Run("rejects invalid rules without touching file or runtime", func(t *testing.T) {
+		beforeFile, beforeRuntime := s.Snapshot()
+		path := filepath.Join(d.Path(), "config.yaml")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		applied, err := s.SetCaptureRules("bogus", "tunnel", []string{"example.com"}, nil)
+		if !errors.Is(err, ErrCaptureEmpty) {
+			t.Fatalf("got %v", err)
+		}
+		if !reflect.DeepEqual(applied, Applied{}) {
+			t.Fatalf("applied %+v", applied)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(after, before) {
+			t.Fatalf("bytes %q", after)
+		}
+		gotFile, gotRuntime := s.Snapshot()
+		if !reflect.DeepEqual(gotFile, beforeFile) || !reflect.DeepEqual(gotRuntime, beforeRuntime) {
+			t.Fatalf("file %+v runtime %+v", gotFile, gotRuntime)
+		}
+	})
+}
+
+func TestSetCaptureRulesWaitsForABlockingSave(t *testing.T) {
+	d, file, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewSession(d, file, Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+	first := savedValues(file)
+	first.Capture = true
+	first.HostsProfile = "测试环境"
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		_, err := s.SaveAndApply(first, func(Applied) {
+			close(started)
+			<-release
+		})
+		if err != nil {
+			t.Errorf("first save: %v", err)
+		}
+	}()
+	<-started
+
+	done := make(chan struct{})
+	go func() {
+		if _, err := s.SetCaptureRules("none", "tunnel", []string{"rules.example"}, nil); err != nil {
+			t.Errorf("set capture rules: %v", err)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("rules save ran while the first apply still held the lock")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("rules save did not finish after the first apply released the lock")
+	}
+
+	gotFile, gotRuntime := s.Snapshot()
+	wantHosts := []string{"rules.example"}
+	if gotFile.CaptureEmpty != "none" || gotFile.CaptureHTTPS != "tunnel" {
+		t.Fatalf("file rules %+v", gotFile)
+	}
+	if !reflect.DeepEqual(gotFile.CaptureHosts, wantHosts) || !reflect.DeepEqual(gotRuntime.CaptureHosts, wantHosts) {
+		t.Fatalf("file hosts %+v runtime hosts %+v", gotFile.CaptureHosts, gotRuntime.CaptureHosts)
+	}
+	if !gotFile.Capture || !gotRuntime.Capture {
+		t.Fatalf("rules save reverted capture: file %v runtime %v", gotFile.Capture, gotRuntime.Capture)
+	}
+	if gotFile.HostsProfile != "测试环境" || gotRuntime.HostsProfile != "测试环境" {
+		t.Fatalf("file hosts_profile %q runtime %q", gotFile.HostsProfile, gotRuntime.HostsProfile)
+	}
+}
+
 func savedValues(file Values) Values {
 	next := file
 	next.Proxy = "127.0.0.1:9090"

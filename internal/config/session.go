@@ -1,6 +1,10 @@
 package config
 
-import "sync"
+import (
+	"sync"
+
+	"httpproxy/internal/capture"
+)
 
 type Overrides struct {
 	Proxy    bool
@@ -94,6 +98,24 @@ func (s *Session) SetHostsProfile(name string, apply func(Applied)) (Applied, er
 	next := s.file
 	next.HostsProfile = name
 	next.CaptureHosts = cloneHosts(s.file.CaptureHosts)
+	return s.saveLocked(next, apply)
+}
+
+// SetCaptureRules changes only the three capture rule fields, keeping Capture
+// and HostsProfile. The validation happens on the same critical section as the
+// read-modify-write, so a concurrent capture or settings save cannot be
+// reverted by a stale copy.
+func (s *Session) SetCaptureRules(empty, https string, hosts []string, apply func(Applied)) (Applied, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	next := s.file
+	next.CaptureEmpty = empty
+	next.CaptureHTTPS = https
+	next.CaptureHosts = cloneHosts(hosts)
+	if _, err := capture.Compile(next.Capture, empty, https, hosts); err != nil {
+		return Applied{}, err
+	}
 	return s.saveLocked(next, apply)
 }
 

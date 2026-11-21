@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"httpproxy/internal/capture"
 	"httpproxy/internal/config"
 )
 
@@ -58,17 +57,7 @@ func (s *Server) putCaptureRules(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	current, _ := s.session.Snapshot()
-	next := current
-	next.CaptureEmpty = body.CaptureEmpty
-	next.CaptureHTTPS = body.CaptureHTTPS
-	next.CaptureHosts = hosts
-	if _, err := capture.Compile(next.Capture, next.CaptureEmpty, next.CaptureHTTPS, next.CaptureHosts); err != nil {
-		writeConfigError(w, err)
-		return
-	}
-
-	applied, err := s.session.SaveAndApply(next, s.applySaved)
+	applied, err := s.session.SetCaptureRules(body.CaptureEmpty, body.CaptureHTTPS, hosts, s.applySaved)
 	if err != nil {
 		writeConfigError(w, err)
 		return
