@@ -47,6 +47,15 @@ Other Make targets:
 - `make test` — run all Go tests and the web UI unit tests
 - `make dev-web` — start the Vite development server
 
+## Install with go install
+
+```sh
+go install github.com/zhangyw-cn/httpproxy/cmd/httpproxy@latest
+```
+
+The binary is written to `$(go env GOPATH)/bin`; add that directory to `PATH` if
+needed. The embedded UI and CA generation are included in the single binary.
+
 ## Run
 
 ```sh
