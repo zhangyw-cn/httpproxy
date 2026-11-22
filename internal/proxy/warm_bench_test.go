@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
 )
 
 func medianDuration(samples []time.Duration) time.Duration {

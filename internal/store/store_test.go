@@ -3,8 +3,8 @@ package store_test
 import (
 	"testing"
 
-	"httpproxy/internal/flow"
-	"httpproxy/internal/store"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/store"
 )
 
 func TestRingEvictsOldest(t *testing.T) {

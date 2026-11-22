@@ -13,10 +13,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"httpproxy/internal/api"
-	"httpproxy/internal/cert"
-	"httpproxy/internal/flow"
-	"httpproxy/internal/store"
+	"github.com/zhangyw-cn/httpproxy/internal/api"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/store"
 )
 
 func TestListGetClearAndCA(t *testing.T) {

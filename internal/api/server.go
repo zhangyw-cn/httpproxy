@@ -9,13 +9,13 @@ import (
 
 	"github.com/coder/websocket"
 
-	"httpproxy/internal/cert"
-	"httpproxy/internal/clients"
-	"httpproxy/internal/config"
-	"httpproxy/internal/flow"
-	"httpproxy/internal/hosts"
-	"httpproxy/internal/proxy"
-	"httpproxy/internal/store"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/clients"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/hosts"
+	"github.com/zhangyw-cn/httpproxy/internal/proxy"
+	"github.com/zhangyw-cn/httpproxy/internal/store"
 )
 
 type Server struct {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 const clientQueueSize = 64

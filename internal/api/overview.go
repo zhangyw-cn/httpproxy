@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"httpproxy/internal/clients"
+	"github.com/zhangyw-cn/httpproxy/internal/clients"
 )
 
 // overviewJSON is the home pane snapshot. Clients is always a slice so the

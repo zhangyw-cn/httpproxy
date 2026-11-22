@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"httpproxy/internal/capture"
-	"httpproxy/internal/cert"
-	"httpproxy/internal/hosts"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/hosts"
 )
 
 func mustHostsTable(t *testing.T, body string) hosts.Table {

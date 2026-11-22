@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 func TestFlowKeepsStartLimit(t *testing.T) {

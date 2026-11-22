@@ -18,12 +18,12 @@ import (
 
 	"github.com/coder/websocket"
 
-	"httpproxy/internal/api"
-	"httpproxy/internal/cert"
-	"httpproxy/internal/config"
-	"httpproxy/internal/flow"
-	"httpproxy/internal/proxy"
-	"httpproxy/internal/store"
+	"github.com/zhangyw-cn/httpproxy/internal/api"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/proxy"
+	"github.com/zhangyw-cn/httpproxy/internal/store"
 )
 
 func TestConfigHTTP(t *testing.T) {

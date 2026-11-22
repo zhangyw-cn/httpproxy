@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"httpproxy/internal/capture"
-	"httpproxy/internal/config"
-	"httpproxy/internal/hosts"
-	"httpproxy/internal/proxy"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/hosts"
+	"github.com/zhangyw-cn/httpproxy/internal/proxy"
 )
 
 func (s *Server) SetProxy(px *proxy.Proxy) {

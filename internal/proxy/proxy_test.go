@@ -18,8 +18,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/net/http2"
 
-	"httpproxy/internal/cert"
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 type memSink struct {

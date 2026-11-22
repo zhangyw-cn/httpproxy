@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
 )
 
 type captureRulesBody struct {

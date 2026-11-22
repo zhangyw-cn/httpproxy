@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
 
 	"gopkg.in/yaml.v3"
 )

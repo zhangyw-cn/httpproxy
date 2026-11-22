@@ -15,8 +15,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"httpproxy/internal/capture"
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 const (

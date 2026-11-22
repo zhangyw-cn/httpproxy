@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"httpproxy/internal/api"
+	"github.com/zhangyw-cn/httpproxy/internal/api"
 )
 
 func TestLocalOnlyAllowsLoopback(t *testing.T) {

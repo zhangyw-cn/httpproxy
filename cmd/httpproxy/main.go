@@ -8,15 +8,15 @@ import (
 	"os"
 	"strings"
 
-	"httpproxy/internal/api"
-	"httpproxy/internal/capture"
-	"httpproxy/internal/cert"
-	"httpproxy/internal/clients"
-	"httpproxy/internal/config"
-	"httpproxy/internal/hosts"
-	"httpproxy/internal/proxy"
-	"httpproxy/internal/store"
-	"httpproxy/internal/ui"
+	"github.com/zhangyw-cn/httpproxy/internal/api"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/clients"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/hosts"
+	"github.com/zhangyw-cn/httpproxy/internal/proxy"
+	"github.com/zhangyw-cn/httpproxy/internal/store"
+	"github.com/zhangyw-cn/httpproxy/internal/ui"
 )
 
 func main() {

@@ -1,8 +1,8 @@
 package api
 
 import (
-	"httpproxy/internal/flow"
-	"httpproxy/internal/store"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/store"
 )
 
 type StoreSink struct {

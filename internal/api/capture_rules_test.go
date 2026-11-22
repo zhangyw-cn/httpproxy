@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"httpproxy/internal/config"
-	"httpproxy/internal/proxy"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/proxy"
 )
 
 func capturePolicy(t *testing.T, px *proxy.Proxy) reflect.Value {

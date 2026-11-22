@@ -1,4 +1,4 @@
-module httpproxy
+module github.com/zhangyw-cn/httpproxy
 
 go 1.24.4
 

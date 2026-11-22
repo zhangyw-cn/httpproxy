@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/net/http2"
 
-	"httpproxy/internal/capture"
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 func (p *Proxy) handleHTTP2(conn *tls.Conn, connectAuthority, upstreamSNI string) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 type Filter struct {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 func TestSummaryOmitsBodies(t *testing.T) {

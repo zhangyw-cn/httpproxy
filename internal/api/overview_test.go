@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"httpproxy/internal/clients"
-	"httpproxy/internal/config"
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/clients"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 type overviewResponse struct {

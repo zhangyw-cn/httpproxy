@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"httpproxy/internal/capture"
-	"httpproxy/internal/cert"
-	"httpproxy/internal/clients"
-	"httpproxy/internal/hosts"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/clients"
+	"github.com/zhangyw-cn/httpproxy/internal/hosts"
 )
 
 const selfProxyMessage = "refusing to proxy to the proxy's own listen address"

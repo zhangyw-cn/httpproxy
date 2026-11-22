@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/net/http2"
 
-	"httpproxy/internal/capture"
-	"httpproxy/internal/clients"
-	"httpproxy/internal/hosts"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/clients"
+	"github.com/zhangyw-cn/httpproxy/internal/hosts"
 )
 
 func TestProxyRecordsClientsPlainHTTP(t *testing.T) {

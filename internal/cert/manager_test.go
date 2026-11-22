@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
 )
 
 func TestLoadOrCreateAndMITMHandshake(t *testing.T) {

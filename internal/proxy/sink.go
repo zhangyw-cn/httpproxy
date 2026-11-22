@@ -1,6 +1,6 @@
 package proxy
 
-import "httpproxy/internal/flow"
+import "github.com/zhangyw-cn/httpproxy/internal/flow"
 
 type FlowSink interface {
 	OnCreated(flow.Flow)

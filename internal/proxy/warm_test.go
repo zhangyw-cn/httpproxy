@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/net/http2"
 
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 type countingListener struct {

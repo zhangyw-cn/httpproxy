@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"httpproxy/internal/config"
-	"httpproxy/internal/hosts"
+	"github.com/zhangyw-cn/httpproxy/internal/config"
+	"github.com/zhangyw-cn/httpproxy/internal/hosts"
 )
 
 const (

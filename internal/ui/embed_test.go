@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"httpproxy/internal/ui"
+	"github.com/zhangyw-cn/httpproxy/internal/ui"
 )
 
 func TestHandlerServesEmbeddedIndex(t *testing.T) {

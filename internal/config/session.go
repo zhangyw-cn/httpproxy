@@ -3,7 +3,7 @@ package config
 import (
 	"sync"
 
-	"httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
 )
 
 type Overrides struct {

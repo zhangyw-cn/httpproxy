@@ -3,7 +3,7 @@ package proxy
 import (
 	"net/http"
 
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 const defaultRecordQueue = 64

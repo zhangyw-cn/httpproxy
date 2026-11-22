@@ -21,9 +21,9 @@ import (
 	"github.com/andybalholm/brotli"
 	"golang.org/x/net/http2"
 
-	"httpproxy/internal/capture"
-	"httpproxy/internal/cert"
-	"httpproxy/internal/flow"
+	"github.com/zhangyw-cn/httpproxy/internal/capture"
+	"github.com/zhangyw-cn/httpproxy/internal/cert"
+	"github.com/zhangyw-cn/httpproxy/internal/flow"
 )
 
 func startProxy(t *testing.T, sink *memSink, maxBody int64, manager *cert.Manager) *Proxy {
