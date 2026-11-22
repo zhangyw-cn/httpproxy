@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -115,12 +114,12 @@ func lockCAInit(caDir string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open CA initialization lock: %w", err)
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(lock); err != nil {
 		_ = lock.Close()
 		return nil, fmt.Errorf("lock CA initialization: %w", err)
 	}
 	return func() {
-		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = unlockFile(lock)
 		_ = lock.Close()
 	}, nil
 }
