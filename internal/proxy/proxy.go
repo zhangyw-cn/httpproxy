@@ -17,12 +17,11 @@ import (
 	"httpproxy/internal/hosts"
 )
 
-var errSelfProxy = errors.New("refusing to proxy to the proxy's own listen address")
+const selfProxyMessage = "refusing to proxy to the proxy's own listen address"
 
-const (
-	selfProxyMessage  = "refusing to proxy to the proxy's own listen address"
-	selfProxyResponse = selfProxyMessage + "\n"
-)
+var errSelfProxy = errors.New(selfProxyMessage)
+
+const selfProxyResponse = selfProxyMessage + "\n"
 
 const (
 	maxIdleConnsTotal   = 128

@@ -32,7 +32,7 @@ type ParseError struct {
 
 func (e *ParseError) Error() string {
 	if e.Line > 0 {
-		return fmt.Sprintf("line %d: %s", e.Line, e.Msg)
+		return fmt.Sprintf("%d: %s", e.Line, e.Msg)
 	}
 	return e.Msg
 }

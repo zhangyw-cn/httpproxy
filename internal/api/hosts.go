@@ -49,8 +49,9 @@ type hostSaveJSON struct {
 }
 
 type hostErrorJSON struct {
-	Error string `json:"error"`
-	Line  int    `json:"line,omitempty"`
+	Error  string `json:"error"`
+	Line   int    `json:"line,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // SetHostsProfiles installs the profile store. It is called once at startup,
@@ -80,7 +81,7 @@ func (s *Server) InitHosts() error {
 	}
 	table, err := s.loadHostsTable(raw)
 	if err != nil {
-		return fmt.Errorf("hosts profile %q: %w", raw, err)
+		return fmt.Errorf("%s: %w", s.profilePath(raw), err)
 	}
 	s.applyHostsTable(raw, table)
 	return nil
@@ -209,7 +210,7 @@ func (s *Server) refreshActiveHosts() {
 // hostsList builds the GET /api/hosts body. The active profile is sorted first
 // even when its file is missing from the directory listing.
 func (s *Server) hostsList() (hostsListJSON, error) {
-	active, _, activeErr := s.hostsState()
+	active, activeRules, activeErr := s.hostsState()
 	out := hostsListJSON{
 		Active:      active,
 		ActiveError: activeErr,
@@ -241,6 +242,7 @@ func (s *Server) hostsList() (hostsListJSON, error) {
 	} else if active != "" {
 		out.Profiles = append(out.Profiles, hostProfileJSON{
 			Name:     active,
+			Rules:    activeRules,
 			Warnings: []hosts.Warning{},
 			Error:    activeErr,
 		})
@@ -342,8 +344,13 @@ func (s *Server) isActiveHosts(name string) bool {
 }
 
 // decodeHostsBody reads a strict JSON object that must carry exactly the
-// requested keys.
+// requested keys. Requiring a JSON content type keeps cross-origin simple
+// requests from reaching the create and rename endpoints.
 func decodeHostsBody(r *http.Request, keys ...string) (map[string]json.RawMessage, error) {
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if !strings.HasPrefix(contentType, "application/json") {
+		return nil, errJSONContentType
+	}
 	data, err := io.ReadAll(io.LimitReader(r.Body, maxHostsBodyBytes))
 	if err != nil {
 		return nil, err
@@ -591,14 +598,28 @@ func (s *Server) deleteHost(w http.ResponseWriter, r *http.Request) {
 
 var errNoHostsProfiles = errors.New("hosts profiles are not configured")
 
+// errJSONContentType rejects non-JSON bodies on the hosts write endpoints.
+var errJSONContentType = errors.New("content type must be application/json")
+
 // writeActiveHostsError is the activation/config case: a target profile that
 // does not exist is a client error, not a 404.
 func writeActiveHostsError(w http.ResponseWriter, err error) {
-	if errors.Is(err, hosts.ErrNotFound) {
+	var parseErr *hosts.ParseError
+	switch {
+	case errors.As(err, &parseErr):
+		line, detail := parseErrorMessage(err)
+		writeJSON(w, http.StatusBadRequest, hostErrorJSON{
+			Error:  "当前启用的 Hosts 配置无效",
+			Line:   line,
+			Detail: detail,
+		})
+	case errors.Is(err, hosts.ErrNotFound):
 		writeJSON(w, http.StatusBadRequest, hostErrorJSON{Error: "配置不存在"})
-		return
+	case errors.Is(err, hosts.ErrInvalidName):
+		writeJSON(w, http.StatusBadRequest, hostErrorJSON{Error: "配置名不合法"})
+	default:
+		writeHostsError(w, err)
 	}
-	writeHostsError(w, err)
 }
 
 func writeHostsError(w http.ResponseWriter, err error) {

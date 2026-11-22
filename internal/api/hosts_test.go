@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -45,8 +46,9 @@ type hostSaveResponse struct {
 }
 
 type hostErrorResponse struct {
-	Error string `json:"error"`
-	Line  int    `json:"line"`
+	Error  string `json:"error"`
+	Line   int    `json:"line"`
+	Detail string `json:"detail"`
 }
 
 func newHostsServer(t *testing.T) (*api.Server, *httptest.Server, *config.Dir, *hosts.Profiles, *proxy.Proxy) {
@@ -77,7 +79,12 @@ func newHostsServer(t *testing.T) (*api.Server, *httptest.Server, *config.Dir, *
 
 func postBody(t *testing.T, url, body string) *http.Response {
 	t.Helper()
-	res, err := http.Post(url, "application/json", strings.NewReader(body))
+	return postContentType(t, url, "application/json", body)
+}
+
+func postContentType(t *testing.T, url, contentType, body string) *http.Response {
+	t.Helper()
+	res, err := http.Post(url, contentType, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +215,24 @@ func TestHostsValidationErrors(t *testing.T) {
 
 	res = putBody(t, ts.URL+"/api/hosts", `{"active":"missing"}`)
 	assertConfigError(t, res, http.StatusBadRequest, "配置不存在")
+
+	// Activating a profile whose file is invalid reports the documented
+	// activation error plus the line detail.
+	if err := os.WriteFile(filepath.Join(profiles.Dir(), "坏文件.hosts"), []byte("bad\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res = putBody(t, ts.URL+"/api/hosts", `{"active":"坏文件"}`)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid active status = %d, want 400", res.StatusCode)
+	}
+	var activeErr hostErrorResponse
+	if err := json.NewDecoder(res.Body).Decode(&activeErr); err != nil {
+		t.Fatal(err)
+	}
+	if activeErr.Error != "当前启用的 Hosts 配置无效" || activeErr.Line != 1 || !strings.HasPrefix(activeErr.Detail, "第 1 行：") {
+		t.Fatalf("active error = %+v, want documented activation error", activeErr)
+	}
 }
 
 func TestActivateHostsWritesConfig(t *testing.T) {
@@ -328,8 +353,8 @@ func TestPutConfigRejectsBadHostsProfile(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&parseErr); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(parseErr.Error, "第 1 行：") || parseErr.Line != 1 {
-		t.Fatalf("error = %+v, want line 1", parseErr)
+	if parseErr.Error != "当前启用的 Hosts 配置无效" || parseErr.Line != 1 || !strings.HasPrefix(parseErr.Detail, "第 1 行：") {
+		t.Fatalf("error = %+v, want documented activation error", parseErr)
 	}
 	after, err = os.ReadFile(cfgPath)
 	if err != nil {
@@ -396,8 +421,11 @@ func TestInitHostsMissingProfile(t *testing.T) {
 	srv.SetHostsProfiles(profiles)
 
 	err = srv.InitHosts()
-	if err == nil || !strings.Contains(err.Error(), "missing") {
-		t.Fatalf("InitHosts error = %v, want mention of missing", err)
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(profiles.Dir(), "missing.hosts")) {
+		t.Fatalf("InitHosts error = %v, want the missing.hosts path", err)
+	}
+	if !strings.Contains(err.Error(), "profile not found") {
+		t.Fatalf("InitHosts error = %v, want profile not found", err)
 	}
 
 	ts := httptest.NewServer(srv.Handler())
@@ -407,6 +435,62 @@ func TestInitHostsMissingProfile(t *testing.T) {
 	decodeJSON(t, res, &list)
 	if list.Active != "" || list.Profiles == nil || len(list.Profiles) != 0 {
 		t.Fatalf("hosts state = %+v, want no active and no profiles", list)
+	}
+}
+
+func TestInitHostsInvalidProfile(t *testing.T) {
+	dir, file, err := config.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := hosts.OpenProfiles(dir.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(profiles.Dir(), "坏.hosts")
+	if err := os.WriteFile(path, []byte("10.0.0.5 ok.test\nbad ip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file.HostsProfile = "坏"
+	session := config.NewSession(dir, file, config.Overrides{}, file.Proxy, file.UI, file.MaxFlows, file.MaxBody)
+	ca, err := cert.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	px := proxy.New("127.0.0.1:0", nil, file.MaxBody, ca)
+	srv := api.New(store.New(file.MaxFlows), ca, session, px)
+	srv.SetHostsProfiles(profiles)
+
+	err = srv.InitHosts()
+	if err == nil || !strings.Contains(err.Error(), path+": 2: invalid IP") {
+		t.Fatalf("InitHosts error = %v, want %q", err, path+": 2: invalid IP")
+	}
+}
+
+func TestHostsWritesRequireJSON(t *testing.T) {
+	_, ts, _, profiles, _ := newHostsServer(t)
+
+	// A text/plain body is a cross-origin simple request, so it must not be
+	// allowed to create a profile.
+	res := postContentType(t, ts.URL+"/api/hosts", "text/plain", `{"name":"csrf"}`)
+	assertConfigError(t, res, http.StatusUnsupportedMediaType, "请求必须是 JSON")
+	if _, err := profiles.Read("csrf"); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("csrf profile was created: %v", err)
+	}
+
+	res = postBody(t, ts.URL+"/api/hosts", `{"name":"原始"}`)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("create status = %d, want 204", res.StatusCode)
+	}
+	res.Body.Close()
+
+	res = postContentType(t, hostURL(ts, "原始")+"/rename", "text/plain", `{"name":"改名"}`)
+	assertConfigError(t, res, http.StatusUnsupportedMediaType, "请求必须是 JSON")
+	if _, err := profiles.Read("原始"); err != nil {
+		t.Fatalf("rename source missing after rejected request: %v", err)
+	}
+	if _, err := profiles.Read("改名"); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("csrf rename created target: %v", err)
 	}
 }
 
@@ -450,6 +534,21 @@ func TestHostsRefreshOnList(t *testing.T) {
 	decodeJSON(t, res, &list)
 	if list.ActiveError == "" {
 		t.Fatal("active_error should report the external parse error")
+	}
+
+	// An external delete leaves the last-good count on the synthetic active
+	// entry instead of reporting 0 rules.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	res = request(t, http.MethodGet, ts.URL+"/api/hosts")
+	decodeJSON(t, res, &list)
+	profile := findProfile(t, list, "测试")
+	if profile.Rules != 2 {
+		t.Fatalf("rules = %d, want last-good 2 after external delete", profile.Rules)
+	}
+	if profile.Error == "" || list.ActiveError == "" {
+		t.Fatalf("active error missing after delete: profile=%q active=%q", profile.Error, list.ActiveError)
 	}
 }
 

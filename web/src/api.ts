@@ -15,8 +15,11 @@ import type {
 /** Reads a JSON {error} body for a non-2xx response, else uses fallback. */
 async function readError(r: Response, fallback: string): Promise<Error> {
   try {
-    const body: { error?: unknown } = await r.json()
-    if (typeof body.error === 'string' && body.error !== '') return new Error(body.error)
+    const body: { error?: unknown; detail?: unknown } = await r.json()
+    if (typeof body.error === 'string' && body.error !== '') {
+      const detail = typeof body.detail === 'string' && body.detail !== '' ? body.detail : ''
+      return new Error(detail ? `${body.error}：${detail}` : body.error)
+    }
   } catch {
     /* body has no error string */
   }

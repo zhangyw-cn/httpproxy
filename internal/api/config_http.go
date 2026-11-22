@@ -186,6 +186,8 @@ func writeConfigError(w http.ResponseWriter, err error) {
 		status, msg = http.StatusBadRequest, "配置含有未知字段"
 	case errors.Is(err, config.ErrJSON):
 		status, msg = http.StatusBadRequest, "配置不是合法的 JSON"
+	case errors.Is(err, errJSONContentType):
+		status, msg = http.StatusUnsupportedMediaType, "请求必须是 JSON"
 	}
 	writeJSON(w, status, struct {
 		Error string `json:"error"`
